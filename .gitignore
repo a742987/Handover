@@ -1,0 +1,19 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# local data: one SQLite index + generated book per person (never commit — maximally sensitive)
+handover-data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# secrets
+.env
+.env.local
+
+# OS / editor noise
+.DS_Store
+Thumbs.db

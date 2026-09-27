@@ -1,0 +1,50 @@
+{
+  "name": "handover-book",
+  "version": "0.1.0",
+  "description": "When a developer leaves, their knowledge shouldn't. Reads a departing engineer's GitHub history and produces a bound, evidence-linked Handover Book.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Handover contributors",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TODO/handover.git"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "bin": {
+    "handover": "dist/cli.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "offboarding",
+    "handover",
+    "developer-experience",
+    "knowledge-management",
+    "github",
+    "cli"
+  ],
+  "dependencies": {
+    "@octokit/rest": "^22.0.1",
+    "commander": "^15.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.2"
+  }
+}

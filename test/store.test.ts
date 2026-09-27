@@ -1,0 +1,89 @@
+import { describe, expect, it } from 'vitest';
+import { HandoverStore } from '../src/store/sqlite.js';
+import type { CommitRecord, IssueRecord, ReviewRecord } from '../src/types.js';
+
+const REPO = 'acme/api';
+
+function commit(sha: string, author: string, at: string, paths: string[], message = `commit ${sha}`): CommitRecord {
+  return {
+    sha,
+    repo: REPO,
+    authorLogin: author,
+    authoredAt: at,
+    message,
+    additions: 10,
+    deletions: 2,
+    files: paths.map((path) => ({ path, additions: 5, deletions: 1 })),
+  };
+}
+
+describe('HandoverStore', () => {
+  it('round-trips commits with their files', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertCommit(commit('a'.repeat(40), 'alice', '2026-09-01T00:00:00Z', ['payments/charge.ts']));
+    const commits = store.allCommits();
+    expect(commits).toHaveLength(1);
+    expect(commits[0]?.authorLogin).toBe('alice');
+    expect(commits[0]?.files).toEqual([{ path: 'payments/charge.ts', additions: 5, deletions: 1 }]);
+    expect(store.hasCommit(REPO, 'a'.repeat(40))).toBe(true);
+    expect(store.hasCommit(REPO, 'b'.repeat(40))).toBe(false);
+  });
+
+  it('upserting the same commit twice does not duplicate rows', () => {
+    const store = HandoverStore.inMemory();
+    const sha = 'c'.repeat(40);
+    store.upsertCommit(commit(sha, 'alice', '2026-09-01T00:00:00Z', ['src/a.ts']));
+    store.upsertCommit(commit(sha, 'alice', '2026-09-01T00:00:00Z', ['src/a.ts']));
+    expect(store.allCommits()).toHaveLength(1);
+    expect(store.allCommits()[0]?.files).toHaveLength(1);
+  });
+
+  it('round-trips reviews with inline comments', () => {
+    const store = HandoverStore.inMemory();
+    const review: ReviewRecord = {
+      id: 7,
+      repo: REPO,
+      prNumber: 1,
+      reviewerLogin: 'alice',
+      state: 'CHANGES_REQUESTED',
+      submittedAt: '2026-08-30T10:00:00Z',
+      body: 'This will break the settlement job.',
+      comments: [{ id: 70, reviewId: 7, path: 'payments/settle.ts', body: 'Off-by-one here.', authorLogin: 'alice' }],
+    };
+    store.upsertReview(review);
+    const loaded = store.allReviews();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]?.comments).toHaveLength(1);
+    expect(loaded[0]?.comments[0]?.body).toContain('Off-by-one');
+  });
+
+  it('round-trips issues with labels and comments, replacing stale labels', () => {
+    const store = HandoverStore.inMemory();
+    const issue: IssueRecord = {
+      repo: REPO,
+      number: 101,
+      title: 'Settlement job crashes on leap days',
+      authorLogin: 'bob',
+      state: 'closed',
+      createdAt: '2026-02-28T00:00:00Z',
+      closedAt: '2026-03-01T00:00:00Z',
+      labels: ['bug'],
+      comments: [{ id: 5, number: 101, authorLogin: 'alice', createdAt: '2026-02-28T05:00:00Z', body: 'Root cause: timezone math.' }],
+    };
+    store.upsertIssue(issue);
+    store.upsertIssue({ ...issue, labels: ['bug', 'incident'] });
+
+    const issues = store.allIssues();
+    expect(issues).toHaveLength(1);
+    expect(issues[0]?.labels).toEqual(['bug', 'incident']);
+    expect(issues[0]?.comments[0]?.body).toContain('timezone');
+  });
+
+  it('keeps PR file paths for review-ownership analysis', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertPrFiles(REPO, 42, ['payments/a.ts', 'payments/b.ts']);
+    store.upsertPrFiles(REPO, 42, ['payments/a.ts', 'payments/b.ts', 'docs/x.md']);
+    const map = store.allPrFiles();
+    expect(map.get(`${REPO}#42`)).toEqual(['payments/a.ts', 'payments/b.ts', 'docs/x.md']);
+  });
+});

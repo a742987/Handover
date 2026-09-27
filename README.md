@@ -1,0 +1,122 @@
+# Handover
+
+> **When a developer leaves, their knowledge shouldn't.**
+> Point Handover at a departing engineer's username, and it reads everything they ever committed, reviewed, and argued for — then produces a bound, evidence-linked **Handover Book** for the person who takes their place.
+
+One command. Fully local. Nothing about your codebase ever leaves your machine.
+
+```bash
+handover gen <username> --repo owner/name
+```
+
+---
+
+## Why
+
+`git blame` tells you *who* wrote a line. It cannot tell you *why* — or which modules will silently lose their only reviewer, or which "weird" design decision is actually load-bearing. Wikis depend on people voluntarily writing, and exit meetings start after the resignation is announced and end before the knowledge is transferred.
+
+Handover covers the implicit losses nothing else covers:
+
+1. **Code Panorama** — every module they touched, its state, and its history
+2. **Implicit Knowledge Inventory** — modules where they were the *sole* author or *sole* reviewer
+3. **Risk Top 5** — "what breaks when they leave," ranked and scored, each item with an evidence chain
+4. **Decision Archaeology** — "why we chose this back then," quoting the actual PR/issue debates
+5. **The 30-Day Path** — the successor's learning plan
+6. **Letter to the Future** — the questions the successor will ask, answered in the departing dev's own voice
+
+## Quick start
+
+Requirements: **Node ≥ 22.5** (ships with built-in SQLite — no native compilation), a GitHub token for reasonable rate limits.
+
+```bash
+git clone <this repo> && cd handover
+npm install
+
+export GITHUB_TOKEN=ghp_...          # repo scope for private repos
+npm run dev -- gen <username> --repo owner/name
+```
+
+Output lands in `handover-data/`:
+
+- `handover-data/<username>.db` — the local SQLite index (one file per person; second runs are near-instant)
+- `handover-data/handover-book-<username>.md` — the bound book
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `gen <username> -r owner/name` | collect → analyze → render the full book |
+| `collect <username> -r owner/name` | index GitHub history only |
+| `risk <username>` | print the Risk Top 5 from the local index |
+| `render <username> -r owner/name` | re-render the book from the index (no network) |
+
+Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`.
+
+### LLM providers
+
+Chapters 1–3 are computed deterministically from the index — they always work, with or without an API key. Chapters 4–6 are synthesized by an LLM; **without a key they fall back to deterministic summaries** instead of failing.
+
+- **Anthropic** — set `ANTHROPIC_API_KEY` (default provider)
+- **OpenAI** — set `OPENAI_API_KEY`, run with `--provider openai`
+- **Ollama** — fully local, no key: start Ollama and run with `--provider ollama`
+
+Every LLM chapter operates under one hard rule: **evidence chain or nothing.** Claims the model cannot support with a commit, PR, review, or issue ref must be labelled *(inference)* — unverifiable assertions have no place in a handover document.
+
+## How risk is scored (and why you can trust it)
+
+```
+risk = sole_contribution_ratio
+     × change_frequency            (last 90 days, normalized)
+     × incident_weight             (commits referencing bug-labelled issues)
+     × irreplaceability            (sole reviewer +0.5, sole author +0.25)
+```
+
+Every Risk Top 5 item lists the exact commits, reviews, and issues that justify its score. The formula lives in [`src/risk/engine.ts`](src/risk/engine.ts) — read it, challenge it, tune it.
+
+## Architecture
+
+```
+┌──────────────┐   ┌───────────────┐   ┌──────────────┐   ┌───────────────┐
+│  Collect     │ → │  Distill      │ → │  Risk Engine │ → │  Render       │
+│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown book│
+│  (Octokit)   │   │  topic clusters│  │  change freq │   │  (PDF/HTML:   │
+│              │   │  Q&A extraction│  │  incidents   │   │   on roadmap) │
+└──────────────┘   └───────────────┘   └──────────────┘   └───────────────┘
+          └────────── SQLite index (one file per person, cacheable) ─────────┘
+```
+
+## Privacy and ethics — read this before you run it for someone
+
+- **A gift, not an audit.** Handover exists to hand a successor the map, never to grade the person leaving. Run it *with* the departing engineer, not around them. Their review comments and commit messages are quoted back to colleagues — if they wouldn't say it in a farewell doc, it doesn't belong in the book.
+- **Local-first.** Collection, indexing, synthesis, and rendering all run on your machine. The only network calls are to GitHub's API and your configured LLM provider. Choose **Ollama** and not a single byte of repository content reaches any third party.
+- **The index is sensitive.** `handover-data/*.db` contains your team's full commit history. It is gitignored by default; treat the file like a credential.
+- **Hallucination is a bug, not a quirk.** LLM output must cite evidence refs; unsupported claims must be labelled *(inference)*. Don't trust a chapter you haven't spot-checked against its evidence chain.
+- **Anonymization** (real names → role codes, for HR contexts) is on the roadmap before any team/enterprise tier ships.
+
+## Development
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # vitest
+npm run build       # dist/
+npm run dev -- ...  # run the CLI from source
+```
+
+Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM providers. CI runs typecheck + tests + build on every push.
+
+## Roadmap
+
+- [x] Repo scaffold: CLI + Octokit collection + SQLite index + risk engine + Markdown book
+- [ ] `npx handover-book gen` end-to-end on a real public repo (MVP, weeks 1–3)
+- [ ] PDF / HTML output and the page-turn demo
+- [ ] 30-Day Path + Letter to the Future with LLM style-transfer polish (v0.2)
+- [ ] Local web reader with evidence deep links (v0.2)
+- [ ] Org-wide capability risk map (v1.0)
+
+## Naming
+
+The npm package is `handover-book` (`handover` is occupied by a deprecated package); the CLI command is `handover`. The final product name is still open — see §8.1 of the project plan.
+
+## License
+
+[MIT](LICENSE)

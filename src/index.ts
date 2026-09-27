@@ -1,0 +1,15 @@
+export type * from './types.js';
+export { loadConfig, DEFAULT_MODELS } from './config.js';
+export type { HandoverConfig, LlmProviderName } from './config.js';
+export { HandoverStore } from './store/sqlite.js';
+export { GitHubCollector } from './collect/github.js';
+export type { CollectOptions, CollectResult } from './collect/github.js';
+export { computeRisk, moduleOf } from './risk/engine.js';
+export type { RiskOptions } from './risk/engine.js';
+export { createProvider } from './distill/llm.js';
+export type { LlmProvider } from './distill/llm.js';
+export { synthesizeChapters, buildDigest, CHAPTER_TITLES } from './distill/synthesize.js';
+export type { SynthesisInput } from './distill/synthesize.js';
+export { renderBook } from './render/markdown.js';
+export { generateHandoverBook, renderHandoverBook } from './pipeline.js';
+export type { GenerateOptions, GenerateResult } from './pipeline.js';
