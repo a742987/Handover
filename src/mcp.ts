@@ -6,7 +6,8 @@
  * Codex, Cursor, ZCode, …) can drive the pipeline without shelling out.
  * stdio transport; launch with `handover-mcp`.
  */
-import { access, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -16,6 +17,10 @@ import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
 import { GitHubCollector } from './collect/github.js';
 import { computeRisk } from './risk/engine.js';
 import { HandoverStore } from './store/sqlite.js';
+import { requireIndex } from './store/index-check.js';
+
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json') as { version: string };
 
 const providerSchema = z
   .enum(['openai', 'anthropic', 'ollama'])
@@ -30,17 +35,6 @@ const dataDirSchema = z
 const reposSchema = z
   .array(z.string())
   .describe('owner/name repositories to read, e.g. ["acme/api", "acme/web"]');
-
-/** Fails with an actionable message instead of silently computing from an empty index. */
-async function requireIndex(dataDir: string, username: string): Promise<string> {
-  const dbPath = path.join(dataDir, `${username}.db`);
-  try {
-    await access(dbPath);
-  } catch {
-    throw new Error(`No index found at ${dbPath} — run the handover_generate or handover_collect tool first.`);
-  }
-  return dbPath;
-}
 
 function textResult(payload: unknown, progress: string[]): {
   content: Array<{ type: 'text'; text: string }>;
@@ -65,7 +59,7 @@ function errorResult(error: unknown): {
 
 const server = new McpServer({
   name: 'handover',
-  version: '0.1.0',
+  version: pkg.version,
 });
 
 server.registerTool(
@@ -174,7 +168,7 @@ server.registerTool(
     const progress: string[] = [];
     try {
       const config = loadConfig({ dataDir });
-      await requireIndex(config.dataDir, username);
+      await requireIndex(config.dataDir, username, 'run the handover_generate or handover_collect tool first.');
       const store = new HandoverStore(path.join(config.dataDir, `${username}.db`));
       try {
         return textResult({ username, risks: computeRisk(store, username) }, progress);
@@ -206,7 +200,7 @@ server.registerTool(
     const progress: string[] = [];
     try {
       const config = loadConfig({ dataDir });
-      await requireIndex(config.dataDir, username);
+      await requireIndex(config.dataDir, username, 'run the handover_generate or handover_collect tool first.');
       const result = await renderHandoverBook({
         username,
         repos,

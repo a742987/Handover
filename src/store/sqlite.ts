@@ -74,6 +74,7 @@ export class HandoverStore {
         author_login TEXT NOT NULL,
         state TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        updated_at TEXT,
         merged_at TEXT,
         body TEXT NOT NULL DEFAULT '',
         additions INTEGER NOT NULL DEFAULT 0,
@@ -120,6 +121,7 @@ export class HandoverStore {
         author_login TEXT NOT NULL,
         state TEXT NOT NULL,
         created_at TEXT NOT NULL,
+        updated_at TEXT,
         closed_at TEXT,
         is_pull_request INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (repo, number)
@@ -147,6 +149,18 @@ export class HandoverStore {
       CREATE INDEX IF NOT EXISTS idx_reviews_reviewer ON reviews (repo, reviewer_login);
       CREATE INDEX IF NOT EXISTS idx_issue_comments_author ON issue_comments (repo, author_login);
     `);
+    // Databases collected before the updated_at columns existed keep working:
+    // the ALTER fails when the column is already there, which is fine.
+    for (const statement of [
+      'ALTER TABLE pull_requests ADD COLUMN updated_at TEXT',
+      'ALTER TABLE issues ADD COLUMN updated_at TEXT',
+    ]) {
+      try {
+        this.db.exec(statement);
+      } catch {
+        // column already exists
+      }
+    }
   }
 
   private run(sql: string, ...params: (string | number | null)[]): void {
@@ -161,56 +175,98 @@ export class HandoverStore {
     return this.db.prepare(sql).get(...params) as unknown as Row | undefined;
   }
 
+  /** Keeps multi-statement upserts (parent + child rows) atomic across a crash. */
+  private transaction<T>(fn: () => T): T {
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        // the transaction was already rolled back or never opened
+      }
+      throw error;
+    }
+  }
+
   // ---- writes -------------------------------------------------------------
 
   upsertCommit(commit: CommitRecord): void {
-    this.run(
-      `INSERT INTO commits (sha, repo, author_login, authored_at, message, additions, deletions)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (repo, sha) DO UPDATE SET
-         author_login = excluded.author_login,
-         authored_at = excluded.authored_at,
-         message = excluded.message,
-         additions = excluded.additions,
-         deletions = excluded.deletions`,
-      commit.sha,
-      commit.repo,
-      commit.authorLogin,
-      commit.authoredAt,
-      commit.message,
-      commit.additions,
-      commit.deletions,
-    );
-    this.run('DELETE FROM commit_files WHERE repo = ? AND sha = ?', commit.repo, commit.sha);
-    const insert = this.db.prepare(
-      'INSERT OR REPLACE INTO commit_files (repo, sha, path, additions, deletions) VALUES (?, ?, ?, ?, ?)',
-    );
-    for (const file of commit.files) {
-      insert.run(commit.repo, commit.sha, file.path, file.additions, file.deletions);
-    }
+    this.transaction(() => {
+      this.run(
+        `INSERT INTO commits (sha, repo, author_login, authored_at, message, additions, deletions)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repo, sha) DO UPDATE SET
+           author_login = excluded.author_login,
+           authored_at = excluded.authored_at,
+           message = excluded.message,
+           additions = excluded.additions,
+           deletions = excluded.deletions`,
+        commit.sha,
+        commit.repo,
+        commit.authorLogin,
+        commit.authoredAt,
+        commit.message,
+        commit.additions,
+        commit.deletions,
+      );
+      this.run('DELETE FROM commit_files WHERE repo = ? AND sha = ?', commit.repo, commit.sha);
+      const insert = this.db.prepare(
+        'INSERT OR REPLACE INTO commit_files (repo, sha, path, additions, deletions) VALUES (?, ?, ?, ?, ?)',
+      );
+      for (const file of commit.files) {
+        insert.run(commit.repo, commit.sha, file.path, file.additions, file.deletions);
+      }
+    });
   }
 
   hasCommit(repo: string, sha: string): boolean {
     return this.get('SELECT 1 AS ok FROM commits WHERE repo = ? AND sha = ?', repo, sha) !== undefined;
   }
 
-  hasPullRequest(repo: string, number: number): boolean {
-    return this.get('SELECT 1 AS ok FROM pull_requests WHERE repo = ? AND number = ?', repo, number) !== undefined;
+  /**
+   * True when the PR is already indexed — and, when `updatedAt` is given, still
+   * current on GitHub-side activity (comments, reviews, merge state all bump it).
+   * Commits are immutable and can skip on existence alone; PRs cannot.
+   */
+  hasPullRequest(repo: string, number: number, updatedAt?: string): boolean {
+    const row = this.get('SELECT updated_at FROM pull_requests WHERE repo = ? AND number = ?', repo, number);
+    if (row === undefined) {
+      return false;
+    }
+    if (updatedAt === undefined) {
+      return true;
+    }
+    const stored = strOrNull(row['updated_at']);
+    return stored !== null && stored >= updatedAt;
   }
 
-  hasIssue(repo: string, number: number): boolean {
-    return this.get('SELECT 1 AS ok FROM issues WHERE repo = ? AND number = ?', repo, number) !== undefined;
+  /** Same freshness contract as hasPullRequest, for issues. */
+  hasIssue(repo: string, number: number, updatedAt?: string): boolean {
+    const row = this.get('SELECT updated_at FROM issues WHERE repo = ? AND number = ?', repo, number);
+    if (row === undefined) {
+      return false;
+    }
+    if (updatedAt === undefined) {
+      return true;
+    }
+    const stored = strOrNull(row['updated_at']);
+    return stored !== null && stored >= updatedAt;
   }
 
   upsertPullRequest(pr: PullRequestRecord): void {
     this.run(
-      `INSERT INTO pull_requests (repo, number, title, author_login, state, created_at, merged_at, body, additions, deletions, changed_files)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO pull_requests (repo, number, title, author_login, state, created_at, updated_at, merged_at, body, additions, deletions, changed_files)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT (repo, number) DO UPDATE SET
          title = excluded.title,
          author_login = excluded.author_login,
          state = excluded.state,
          created_at = excluded.created_at,
+         updated_at = COALESCE(excluded.updated_at, updated_at),
          merged_at = excluded.merged_at,
          body = excluded.body,
          additions = excluded.additions,
@@ -222,6 +278,7 @@ export class HandoverStore {
       pr.authorLogin,
       pr.state,
       pr.createdAt,
+      pr.updatedAt ?? null,
       pr.mergedAt,
       pr.body,
       pr.additions,
@@ -231,47 +288,51 @@ export class HandoverStore {
   }
 
   upsertPrFiles(repo: string, prNumber: number, paths: string[]): void {
-    this.run('DELETE FROM pr_files WHERE repo = ? AND pr_number = ?', repo, prNumber);
-    const insert = this.db.prepare('INSERT OR REPLACE INTO pr_files (repo, pr_number, path) VALUES (?, ?, ?)');
-    for (const p of paths) {
-      insert.run(repo, prNumber, p);
-    }
+    this.transaction(() => {
+      this.run('DELETE FROM pr_files WHERE repo = ? AND pr_number = ?', repo, prNumber);
+      const insert = this.db.prepare('INSERT OR REPLACE INTO pr_files (repo, pr_number, path) VALUES (?, ?, ?)');
+      for (const p of paths) {
+        insert.run(repo, prNumber, p);
+      }
+    });
   }
 
   upsertReview(review: ReviewRecord): void {
-    this.run(
-      `INSERT INTO reviews (repo, id, pr_number, reviewer_login, state, submitted_at, body)
-       VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (repo, id) DO UPDATE SET
-         pr_number = excluded.pr_number,
-         reviewer_login = excluded.reviewer_login,
-         state = excluded.state,
-         submitted_at = excluded.submitted_at,
-         body = excluded.body`,
-      review.repo,
-      review.id,
-      review.prNumber,
-      review.reviewerLogin,
-      review.state,
-      review.submittedAt,
-      review.body,
-    );
-    this.run('DELETE FROM review_comments WHERE repo = ? AND review_id = ?', review.repo, review.id);
-    const insert = this.db.prepare(
-      `INSERT OR REPLACE INTO review_comments (repo, id, review_id, pr_number, path, body, author_login)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    );
-    for (const comment of review.comments) {
-      insert.run(
+    this.transaction(() => {
+      this.run(
+        `INSERT INTO reviews (repo, id, pr_number, reviewer_login, state, submitted_at, body)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repo, id) DO UPDATE SET
+           pr_number = excluded.pr_number,
+           reviewer_login = excluded.reviewer_login,
+           state = excluded.state,
+           submitted_at = excluded.submitted_at,
+           body = excluded.body`,
         review.repo,
-        comment.id,
-        comment.reviewId,
+        review.id,
         review.prNumber,
-        comment.path,
-        comment.body,
-        comment.authorLogin,
+        review.reviewerLogin,
+        review.state,
+        review.submittedAt,
+        review.body,
       );
-    }
+      this.run('DELETE FROM review_comments WHERE repo = ? AND review_id = ?', review.repo, review.id);
+      const insert = this.db.prepare(
+        `INSERT OR REPLACE INTO review_comments (repo, id, review_id, pr_number, path, body, author_login)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+      for (const comment of review.comments) {
+        insert.run(
+          review.repo,
+          comment.id,
+          comment.reviewId,
+          review.prNumber,
+          comment.path,
+          comment.body,
+          comment.authorLogin,
+        );
+      }
+    });
   }
 
   upsertComments(repo: string, number: number, comments: CommentRecord[]): void {
@@ -285,36 +346,40 @@ export class HandoverStore {
   }
 
   upsertIssue(issue: IssueRecord): void {
-    this.run(
-      `INSERT INTO issues (repo, number, title, author_login, state, created_at, closed_at, is_pull_request)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (repo, number) DO UPDATE SET
-         title = excluded.title,
-         author_login = excluded.author_login,
-         state = excluded.state,
-         created_at = excluded.created_at,
-         closed_at = excluded.closed_at,
-         is_pull_request = excluded.is_pull_request`,
-      issue.repo,
-      issue.number,
-      issue.title,
-      issue.authorLogin,
-      issue.state,
-      issue.createdAt,
-      issue.closedAt,
-      0,
-    );
-    this.run('DELETE FROM issue_labels WHERE repo = ? AND issue_number = ?', issue.repo, issue.number);
-    const label = this.db.prepare('INSERT OR REPLACE INTO issue_labels (repo, issue_number, label) VALUES (?, ?, ?)');
-    for (const name of issue.labels) {
-      label.run(issue.repo, issue.number, name);
-    }
-    this.run('DELETE FROM issue_comments WHERE repo = ? AND issue_number = ?', issue.repo, issue.number);
-    this.upsertComments(
-      issue.repo,
-      issue.number,
-      issue.comments.map((comment) => ({ ...comment, number: issue.number })),
-    );
+    this.transaction(() => {
+      this.run(
+        `INSERT INTO issues (repo, number, title, author_login, state, created_at, updated_at, closed_at, is_pull_request)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repo, number) DO UPDATE SET
+           title = excluded.title,
+           author_login = excluded.author_login,
+           state = excluded.state,
+           created_at = excluded.created_at,
+           updated_at = COALESCE(excluded.updated_at, updated_at),
+           closed_at = excluded.closed_at,
+           is_pull_request = excluded.is_pull_request`,
+        issue.repo,
+        issue.number,
+        issue.title,
+        issue.authorLogin,
+        issue.state,
+        issue.createdAt,
+        issue.updatedAt ?? null,
+        issue.closedAt,
+        issue.isPullRequest ? 1 : 0,
+      );
+      this.run('DELETE FROM issue_labels WHERE repo = ? AND issue_number = ?', issue.repo, issue.number);
+      const label = this.db.prepare('INSERT OR REPLACE INTO issue_labels (repo, issue_number, label) VALUES (?, ?, ?)');
+      for (const name of issue.labels) {
+        label.run(issue.repo, issue.number, name);
+      }
+      this.run('DELETE FROM issue_comments WHERE repo = ? AND issue_number = ?', issue.repo, issue.number);
+      this.upsertComments(
+        issue.repo,
+        issue.number,
+        issue.comments.map((comment) => ({ ...comment, number: issue.number })),
+      );
+    });
   }
 
   setMeta(key: string, value: string): void {
@@ -366,6 +431,7 @@ export class HandoverStore {
       authorLogin: str(row['author_login']),
       state: str(row['state']),
       createdAt: str(row['created_at']),
+      updatedAt: strOrNull(row['updated_at']),
       mergedAt: strOrNull(row['merged_at']),
       body: str(row['body']),
       additions: num(row['additions']),
@@ -451,7 +517,9 @@ export class HandoverStore {
         authorLogin: str(row['author_login']),
         state: str(row['state']),
         createdAt: str(row['created_at']),
+        updatedAt: strOrNull(row['updated_at']),
         closedAt: strOrNull(row['closed_at']),
+        isPullRequest: num(row['is_pull_request']) === 1,
         labels: labelsByIssue.get(key) ?? [],
         comments: commentsByIssue.get(key) ?? [],
       };

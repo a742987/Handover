@@ -20,6 +20,31 @@ export interface CollectOptions {
 /** Parallel detail fetches per repo; commit details are one request per commit. */
 const DETAIL_CONCURRENCY = 8;
 
+const MAX_REQUEST_ATTEMPTS = 4;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** True for failures worth retrying: abuse limits (403/429) and transient 5xx. */
+function isRetryable(error: unknown): boolean {
+  const status = (error as { status?: number }).status ?? 0;
+  const message = error instanceof Error ? error.message : String(error);
+  if (status === 429 || status >= 500) {
+    return true;
+  }
+  return status === 403 && /rate limit|secondary rate/i.test(message);
+}
+
+function retryDelayMs(error: unknown, attempt: number): number {
+  const headers = (error as { response?: { headers?: Record<string, unknown> } }).response?.headers;
+  const retryAfter = Number(headers?.['retry-after']);
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(retryAfter * 1000, 60_000);
+  }
+  return Math.min(1000 * 2 ** attempt, 30_000);
+}
+
 export interface CollectResult {
   indexedCommits: number;
   skippedCommits: number;
@@ -67,9 +92,41 @@ export class GitHubCollector {
   private readonly octokit: Octokit;
   private readonly octokitTokenWasProvided: boolean;
 
-  constructor(token: string) {
+  constructor(token: string, octokit?: Octokit) {
     this.octokitTokenWasProvided = token.trim().length > 0;
-    this.octokit = new Octokit({ auth: token || undefined, userAgent: 'handover-book' });
+    this.octokit = octokit ?? new Octokit({ auth: token || undefined, userAgent: 'handover-book' });
+    this.installRequestBackoff();
+  }
+
+  /**
+   * Retries every GitHub request through the request hook — pagination and
+   * detail fetches alike — with exponential backoff plus Retry-After support.
+   * A large --refresh run then degrades slowly instead of aborting mid-way.
+   */
+  private installRequestBackoff(): void {
+    const hookable = this.octokit as unknown as {
+      hook?: {
+        wrap?: (
+          name: string,
+          handler: (request: (options: unknown) => Promise<unknown>, options: unknown) => Promise<unknown>,
+        ) => void;
+      };
+    };
+    hookable.hook?.wrap?.('request', async (request, options) => {
+      let lastError: unknown;
+      for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
+        try {
+          return await request(options);
+        } catch (error) {
+          lastError = error;
+          if (!isRetryable(error) || attempt === MAX_REQUEST_ATTEMPTS) {
+            break;
+          }
+          await sleep(retryDelayMs(error, attempt));
+        }
+      }
+      throw lastError;
+    });
   }
 
   async collectInto(
@@ -224,36 +281,48 @@ export class GitHubCollector {
     // large repos from crawling while staying polite to the API.
     let next = 0;
     let done = 0;
+    let firstError: unknown = null;
     const worker = async (): Promise<void> => {
       while (next < pending.length) {
+        if (firstError !== null) {
+          return; // stop taking new work; other workers finish their current commit
+        }
         const item = pending[next++]!;
-        const detail = await this.octokit.rest.repos.getCommit({ owner, repo, ref: item.sha });
-        const files = (detail.data.files ?? [])
-          .filter((file) => typeof file.filename === 'string')
-          .map((file) => ({
-            path: file.filename as string,
-            additions: file.additions ?? 0,
-            deletions: file.deletions ?? 0,
-          }));
-        const commit: CommitRecord = {
-          sha: item.sha,
-          repo: name,
-          authorLogin: item.authorLogin,
-          authoredAt: item.authoredAt ?? detail.data.commit.author?.date ?? new Date().toISOString(),
-          message: item.message ?? detail.data.commit.message ?? '',
-          additions: detail.data.stats?.additions ?? files.reduce((sum, file) => sum + file.additions, 0),
-          deletions: detail.data.stats?.deletions ?? files.reduce((sum, file) => sum + file.deletions, 0),
-          files,
-        };
-        store.upsertCommit(commit);
-        result.indexedCommits += 1;
-        done += 1;
-        if (done % 50 === 0) {
-          options.onProgress?.(`  indexed ${done} new commits in ${name} …`);
+        try {
+          const detail = await this.octokit.rest.repos.getCommit({ owner, repo, ref: item.sha });
+          const files = (detail.data.files ?? [])
+            .filter((file) => typeof file.filename === 'string')
+            .map((file) => ({
+              path: file.filename as string,
+              additions: file.additions ?? 0,
+              deletions: file.deletions ?? 0,
+            }));
+          const commit: CommitRecord = {
+            sha: item.sha,
+            repo: name,
+            authorLogin: item.authorLogin,
+            authoredAt: item.authoredAt ?? detail.data.commit.author?.date ?? new Date().toISOString(),
+            message: item.message ?? detail.data.commit.message ?? '',
+            additions: detail.data.stats?.additions ?? files.reduce((sum, file) => sum + file.additions, 0),
+            deletions: detail.data.stats?.deletions ?? files.reduce((sum, file) => sum + file.deletions, 0),
+            files,
+          };
+          store.upsertCommit(commit);
+          result.indexedCommits += 1;
+          done += 1;
+          if (done % 50 === 0) {
+            options.onProgress?.(`  indexed ${done} new commits in ${name} …`);
+          }
+        } catch (error) {
+          firstError ??= error;
+          return;
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(DETAIL_CONCURRENCY, pending.length) }, worker));
+    if (firstError !== null) {
+      throw firstError;
+    }
   }
 
   private async collectPullRequests(
@@ -270,6 +339,8 @@ export class GitHubCollector {
       user?: { login?: string } | null;
       state?: string;
       created_at?: string;
+      updated_at?: string;
+      closed_at?: string | null;
       merged_at?: string | null;
       body?: string | null;
       additions?: number;
@@ -285,9 +356,10 @@ export class GitHubCollector {
         // PRs are listed newest-first by creation, so every later page is older too.
         break;
       }
-      // An indexed PR already carries its files, reviews and comments; skipping
-      // it here is what makes second runs near-instant.
-      if (!options.refresh && store.hasPullRequest(name, number)) {
+      const updatedAt = pr.updated_at ?? null;
+      // Unlike commits, PRs change over time (merge state, reviews, comments all
+      // bump updated_at) — skip only when the cached row is still current.
+      if (!options.refresh && store.hasPullRequest(name, number, updatedAt ?? undefined)) {
         result.skippedPullRequests += 1;
         continue;
       }
@@ -298,6 +370,7 @@ export class GitHubCollector {
         authorLogin: pr.user?.login ?? 'unknown',
         state: pr.state ?? 'unknown',
         createdAt,
+        updatedAt,
         mergedAt: pr.merged_at ?? null,
         body: pr.body ?? '',
         additions: pr.additions ?? 0,
@@ -380,7 +453,21 @@ export class GitHubCollector {
         createdAt: comment.created_at ?? '',
         body: comment.body ?? '',
       }));
-      store.upsertComments(name, number, comments);
+      // Mirror the PR into the shared issue namespace so its conversation shows
+      // up wherever the index is read (GitHub uses one number space for both).
+      store.upsertIssue({
+        repo: name,
+        number,
+        title: pr.title ?? '',
+        authorLogin: pr.user?.login ?? 'unknown',
+        state: pr.state ?? 'unknown',
+        createdAt,
+        updatedAt,
+        closedAt: pr.closed_at ?? null,
+        labels: [],
+        comments,
+        isPullRequest: true,
+      });
     }
   }
 
@@ -398,6 +485,7 @@ export class GitHubCollector {
       user?: { login?: string } | null;
       state?: string;
       created_at?: string;
+      updated_at?: string;
       closed_at?: string | null;
       pull_request?: unknown;
       labels?: Array<{ name?: string } | string>;
@@ -417,7 +505,8 @@ export class GitHubCollector {
       if (issue.pull_request !== undefined) {
         continue;
       }
-      if (!options.refresh && store.hasIssue(name, number)) {
+      const updatedAt = issue.updated_at ?? null;
+      if (!options.refresh && store.hasIssue(name, number, updatedAt ?? undefined)) {
         result.skippedIssues += 1;
         continue;
       }
@@ -446,12 +535,27 @@ export class GitHubCollector {
         authorLogin: issue.user?.login ?? 'unknown',
         state: issue.state ?? 'unknown',
         createdAt,
+        updatedAt,
         closedAt: issue.closed_at ?? null,
         labels: (issue.labels ?? []).map((label) => (typeof label === 'string' ? label : label.name ?? '')),
         comments,
+        isPullRequest: false,
       };
       store.upsertIssue(record);
       result.issues += 1;
     }
   }
+}
+
+/** Total rows touched (indexed + skipped) — the "did we find anything" check. */
+export function countCollected(result: CollectResult): number {
+  return (
+    result.indexedCommits +
+    result.skippedCommits +
+    result.pullRequests +
+    result.skippedPullRequests +
+    result.reviews +
+    result.issues +
+    result.skippedIssues
+  );
 }

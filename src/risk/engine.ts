@@ -32,7 +32,7 @@ interface ModuleAccumulator {
   bugIssues: Set<number>;
 }
 
-function firstLine(text: string, max = 120): string {
+export function firstLine(text: string, max = 120): string {
   const line = text.split('\n')[0] ?? '';
   return line.length > max ? `${line.slice(0, max - 1)}…` : line;
 }

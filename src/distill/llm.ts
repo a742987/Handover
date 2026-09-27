@@ -39,7 +39,12 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
     }
     const text = await response.text();
     if (response.ok) {
-      return JSON.parse(text) as unknown;
+      try {
+        return JSON.parse(text) as unknown;
+      } catch {
+        // A 2xx with a non-JSON body (proxy page, HTML error) needs its own message.
+        throw new Error(`Unexpected non-JSON response from ${url} (HTTP ${response.status}): ${text.slice(0, 200)}`);
+      }
     }
     lastError = new Error(`${response.status} from ${url}: ${text.slice(0, 300)}`);
     if (!RETRYABLE_STATUSES.has(response.status) || attempt === MAX_ATTEMPTS) {

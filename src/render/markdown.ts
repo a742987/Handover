@@ -30,8 +30,12 @@ export function renderBook(book: HandoverBook): string {
     `- **Synthesis:** ${book.chapters.some((chapter) => chapter.generatedBy === 'llm') ? 'LLM + deterministic' : 'deterministic (no LLM key configured)'}`,
     '',
   );
+  const usedLlm = book.chapters.some((chapter) => chapter.generatedBy === 'llm');
+  const provider = `${book.llmProvider ?? 'an external LLM provider'}${book.llmModel ? ` (${book.llmModel})` : ''}`;
   lines.push(
-    `> This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; nothing was uploaded anywhere. Claims without an evidence ref are labelled *(inference)*.`,
+    usedLlm
+      ? `> This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; the LLM-synthesized chapters were written by ${provider}, to which collected repository content was sent. Claims without an evidence ref are labelled *(inference)*.`
+      : `> This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; nothing was uploaded anywhere. Claims without an evidence ref are labelled *(inference)*.`,
     '',
   );
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { HandoverBook, RiskItem } from './types.js';
 import { loadConfig, type HandoverConfig, type LlmProviderName } from './config.js';
 import { HandoverStore } from './store/sqlite.js';
-import { GitHubCollector } from './collect/github.js';
+import { GitHubCollector, countCollected } from './collect/github.js';
 import { computeRisk } from './risk/engine.js';
 import { synthesizeChapters } from './distill/synthesize.js';
 import { createProvider, type LlmProvider } from './distill/llm.js';
@@ -65,6 +65,8 @@ async function finishFromStore(
     repos,
     generatedAt: new Date().toISOString(),
     chapters,
+    llmProvider: provider?.name,
+    llmModel: provider?.model,
   };
   const bookPath = bookPathFor(config, username);
   await writeFile(bookPath, renderBook(book), 'utf8');
@@ -96,14 +98,7 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
     onProgress(
       `Collection done: ${collected.indexedCommits} new commits indexed (${collected.skippedCommits} already cached), ${collected.pullRequests} PRs (${collected.skippedPullRequests} cached), ${collected.reviews} reviews, ${collected.issues} issues (${collected.skippedIssues} cached).`,
     );
-    const collectedTotal =
-      collected.indexedCommits +
-      collected.skippedCommits +
-      collected.pullRequests +
-      collected.skippedPullRequests +
-      collected.reviews +
-      collected.issues +
-      collected.skippedIssues;
+    const collectedTotal = countCollected(collected);
     if (collectedTotal === 0) {
       onProgress(
         `warning: no GitHub activity found for @${options.username} in ${options.repos.join(', ')} — check the username, the repo names, and the --since window.`,

@@ -72,4 +72,20 @@ describe('renderBook', () => {
     expect(CHAPTER_TITLES[5]).toBe('The 30-Day Path');
     expect(CHAPTER_TITLES[6]).toBe('Letter to the Future');
   });
+
+  it('discloses the LLM provider when any chapter was LLM-synthesized', () => {
+    const markdown = renderBook({ ...book, llmProvider: 'anthropic', llmModel: 'claude-sonnet-4-5' });
+    expect(markdown).toContain('repository content was sent');
+    expect(markdown).toContain('anthropic (claude-sonnet-4-5)');
+    expect(markdown).not.toContain('nothing was uploaded anywhere');
+  });
+
+  it('keeps the local-only note for deterministic-only books', () => {
+    const deterministic: HandoverBook = {
+      ...book,
+      chapters: book.chapters.map((chapter) => ({ ...chapter, generatedBy: 'deterministic' })),
+    };
+    const markdown = renderBook(deterministic);
+    expect(markdown).toContain('nothing was uploaded anywhere');
+  });
 });

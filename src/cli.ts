@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
-import { mkdir, access } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
 import { loadConfig, type LlmProviderName } from './config.js';
 import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
-import { GitHubCollector } from './collect/github.js';
+import { GitHubCollector, countCollected } from './collect/github.js';
 import { computeRisk } from './risk/engine.js';
 import { HandoverStore } from './store/sqlite.js';
+import { requireIndex } from './store/index-check.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
@@ -29,17 +30,6 @@ function parseSince(value: string): string {
     throw new InvalidArgumentError('--since expects an ISO date, e.g. 2024-01-01');
   }
   return date.toISOString();
-}
-
-/** Fails with an actionable message instead of silently rendering from an empty index. */
-async function requireIndex(config: { dataDir: string }, username: string): Promise<string> {
-  const dbPath = path.join(config.dataDir, `${username}.db`);
-  try {
-    await access(dbPath);
-  } catch {
-    throw new Error(`No index found at ${dbPath} — run "handover collect ${username} -r owner/name" first.`);
-  }
-  return dbPath;
 }
 
 function printRiskTable(risks: Array<{ rank: number; module: string; score: number; rationale: string }>): void {
@@ -126,15 +116,7 @@ program
         console.log(
           `Collected: ${collected.indexedCommits} new commits (${collected.skippedCommits} cached), ${collected.pullRequests} PRs (${collected.skippedPullRequests} cached), ${collected.reviews} reviews, ${collected.issues} issues (${collected.skippedIssues} cached).`,
         );
-        const total =
-          collected.indexedCommits +
-          collected.skippedCommits +
-          collected.pullRequests +
-          collected.skippedPullRequests +
-          collected.reviews +
-          collected.issues +
-          collected.skippedIssues;
-        if (total === 0) {
+        if (countCollected(collected) === 0) {
           console.warn(
             `warning: no GitHub activity found for @${username} in ${options.repo.join(', ')} — check the username, the repo names, and the --since window.`,
           );
@@ -155,7 +137,7 @@ program
   .action(async (username: string, options: { dataDir: string }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
-      await requireIndex(config, username);
+      await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
       const store = new HandoverStore(path.join(config.dataDir, `${username}.db`));
       try {
         printRiskTable(computeRisk(store, username));
@@ -178,7 +160,7 @@ program
   .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir: string }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
-      await requireIndex(config, username);
+      await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
       const result = await renderHandoverBook({
         username,
         repos: options.repo,

@@ -59,6 +59,10 @@ export interface IssueRecord {
   closedAt: string | null;
   labels: string[];
   comments: CommentRecord[];
+  /** true for rows that mirror a pull request (GitHub shares one number namespace) */
+  isPullRequest?: boolean;
+  /** last GitHub-side activity; used to decide whether the cached row is still current */
+  updatedAt?: string | null;
 }
 
 export interface PullRequestRecord {
@@ -73,6 +77,8 @@ export interface PullRequestRecord {
   additions: number;
   deletions: number;
   changedFiles: number;
+  /** last GitHub-side activity; used to decide whether the cached row is still current */
+  updatedAt?: string | null;
 }
 
 /** A module is the top-level directory of a changed file; root files form the "(root)" module. */
@@ -126,4 +132,7 @@ export interface HandoverBook {
   repos: string[];
   generatedAt: string;
   chapters: BookChapter[];
+  /** set when any chapter was LLM-synthesized — the rendered privacy note depends on it */
+  llmProvider?: string;
+  llmModel?: string;
 }
