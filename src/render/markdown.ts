@@ -5,6 +5,15 @@ function evidenceKey(ref: EvidenceRef): string {
   return `${ref.kind}:${ref.ref}`;
 }
 
+/** Markdown table cells cannot contain unescaped pipes. */
+function tableCell(text: string): string {
+  return text.replace(/\|/g, '\\|');
+}
+
+function evidenceLink(ref: EvidenceRef): string {
+  return ref.url ? `[\`${ref.ref}\`](${ref.url})` : `\`${ref.ref}\``;
+}
+
 /**
  * Renders the bound book as markdown. The layout is deliberately "print-like":
  * title page, ethics note, table of contents, numbered chapters, evidence appendix.
@@ -52,9 +61,9 @@ export function renderBook(book: HandoverBook): string {
   if (allEvidence.length === 0) {
     lines.push('Evidence refs are cited inline within chapter bodies.');
   } else {
-    lines.push('| Kind | Ref | Excerpt |', '|---|---|---|');
+    lines.push('| Kind | Evidence | Excerpt |', '|---|---|---|');
     for (const ref of allEvidence) {
-      lines.push(`| ${ref.kind} | \`${ref.ref}\` | ${ref.excerpt ?? '—'} |`);
+      lines.push(`| ${ref.kind} | ${evidenceLink(ref)} | ${ref.excerpt ? tableCell(ref.excerpt) : '—'} |`);
     }
   }
   lines.push('');

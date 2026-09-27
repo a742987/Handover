@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { createRequire } from 'node:module';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, access } from 'node:fs/promises';
 import path from 'node:path';
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { loadConfig, type LlmProviderName } from './config.js';
 import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
 import { GitHubCollector } from './collect/github.js';
@@ -21,6 +21,25 @@ function parseRepos(value: string, previous: string[]): string[] {
     }
   }
   return repos;
+}
+
+function parseSince(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new InvalidArgumentError('--since expects an ISO date, e.g. 2024-01-01');
+  }
+  return date.toISOString();
+}
+
+/** Fails with an actionable message instead of silently rendering from an empty index. */
+async function requireIndex(config: { dataDir: string }, username: string): Promise<string> {
+  const dbPath = path.join(config.dataDir, `${username}.db`);
+  try {
+    await access(dbPath);
+  } catch {
+    throw new Error(`No index found at ${dbPath} — run "handover collect ${username} -r owner/name" first.`);
+  }
+  return dbPath;
 }
 
 function printRiskTable(risks: Array<{ rank: number; module: string; score: number; rationale: string }>): void {
@@ -54,7 +73,7 @@ program
   .requiredOption('-r, --repo <repo...>', 'owner/name repositories to read (repeat the flag or comma-separate)', parseRepos)
   .option('--provider <provider>', 'LLM provider: openai | anthropic | ollama')
   .option('--model <model>', 'LLM model override')
-  .option('--since <date>', 'only collect activity created after this ISO date')
+  .option('--since <date>', 'only collect activity created after this ISO date', parseSince)
   .option('--data-dir <dir>', 'directory for the SQLite index and the generated book', 'handover-data')
   .option('--refresh', 're-fetch commit details even for already-indexed commits', false)
   .action(async (username: string, options: {
@@ -89,7 +108,7 @@ program
   .description('collect GitHub history into the local index without rendering the book')
   .argument('<username>', 'GitHub username of the departing engineer')
   .requiredOption('-r, --repo <repo...>', 'owner/name repositories to read', parseRepos)
-  .option('--since <date>', 'only collect activity created after this ISO date')
+  .option('--since <date>', 'only collect activity created after this ISO date', parseSince)
   .option('--data-dir <dir>', 'directory for the SQLite index', 'handover-data')
   .option('--refresh', 're-fetch commit details even for already-indexed commits', false)
   .action(async (username: string, options: { repo: string[]; since?: string; dataDir: string; refresh?: boolean }) => {
@@ -105,8 +124,21 @@ program
           onProgress: (message) => console.log(message),
         });
         console.log(
-          `Collected: ${collected.indexedCommits} new commits (${collected.skippedCommits} cached), ${collected.pullRequests} PRs, ${collected.reviews} reviews, ${collected.issues} issues.`,
+          `Collected: ${collected.indexedCommits} new commits (${collected.skippedCommits} cached), ${collected.pullRequests} PRs (${collected.skippedPullRequests} cached), ${collected.reviews} reviews, ${collected.issues} issues (${collected.skippedIssues} cached).`,
         );
+        const total =
+          collected.indexedCommits +
+          collected.skippedCommits +
+          collected.pullRequests +
+          collected.skippedPullRequests +
+          collected.reviews +
+          collected.issues +
+          collected.skippedIssues;
+        if (total === 0) {
+          console.warn(
+            `warning: no GitHub activity found for @${username} in ${options.repo.join(', ')} — check the username, the repo names, and the --since window.`,
+          );
+        }
       } finally {
         store.close();
       }
@@ -123,6 +155,7 @@ program
   .action(async (username: string, options: { dataDir: string }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
+      await requireIndex(config, username);
       const store = new HandoverStore(path.join(config.dataDir, `${username}.db`));
       try {
         printRiskTable(computeRisk(store, username));
@@ -138,12 +171,14 @@ program
   .command('render')
   .description('re-render the Handover Book from an existing index (no network)')
   .argument('<username>', 'GitHub username')
-  .requiredOption('-r, --repo <repo...>', 'owner/name repositories that were collected', parseRepos)
+  .option('-r, --repo [repo...]', 'owner/name repositories (defaults to the ones recorded in the index)', parseRepos, [])
   .option('--provider <provider>', 'LLM provider: openai | anthropic | ollama')
   .option('--model <model>', 'LLM model override')
   .option('--data-dir <dir>', 'directory holding the SQLite index', 'handover-data')
   .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir: string }) => {
     try {
+      const config = loadConfig({ dataDir: options.dataDir });
+      await requireIndex(config, username);
       const result = await renderHandoverBook({
         username,
         repos: options.repo,

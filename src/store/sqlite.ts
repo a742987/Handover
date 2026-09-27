@@ -194,6 +194,14 @@ export class HandoverStore {
     return this.get('SELECT 1 AS ok FROM commits WHERE repo = ? AND sha = ?', repo, sha) !== undefined;
   }
 
+  hasPullRequest(repo: string, number: number): boolean {
+    return this.get('SELECT 1 AS ok FROM pull_requests WHERE repo = ? AND number = ?', repo, number) !== undefined;
+  }
+
+  hasIssue(repo: string, number: number): boolean {
+    return this.get('SELECT 1 AS ok FROM issues WHERE repo = ? AND number = ?', repo, number) !== undefined;
+  }
+
   upsertPullRequest(pr: PullRequestRecord): void {
     this.run(
       `INSERT INTO pull_requests (repo, number, title, author_login, state, created_at, merged_at, body, additions, deletions, changed_files)

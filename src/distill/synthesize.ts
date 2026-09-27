@@ -67,12 +67,13 @@ function computeModuleStats(store: HandoverStore, username: string): ModuleStat[
 }
 
 /** Compact, evidence-tagged digest of everything the LLM chapters are allowed to know. */
-export function buildDigest(input: SynthesisInput): string {
+export function buildDigest(input: SynthesisInput, charBudget = 60_000): string {
   const { store, username } = input;
   const parts: string[] = [];
 
   parts.push(`## Module statistics (commits; share = commits authored by @${username})`);
-  for (const stat of computeModuleStats(store, username)) {
+  const stats = computeModuleStats(store, username).slice(0, 150);
+  for (const stat of stats) {
     parts.push(`- ${stat.key}: ${stat.total} commits, @${username} share ${formatPercent(stat.byUser / Math.max(1, stat.total))}, last touched ${stat.lastTouchedAt.slice(0, 10)}`);
   }
 
@@ -122,7 +123,11 @@ export function buildDigest(input: SynthesisInput): string {
     parts.push(`- ${risk.rank}. ${risk.module} — score ${risk.score.toFixed(3)}; ${risk.rationale}`);
   }
 
-  return parts.join('\n');
+  const digest = parts.join('\n');
+  if (digest.length > charBudget) {
+    return `${digest.slice(0, charBudget)}\n\n(digest truncated at ${charBudget} characters — narrow the collection window with --since if chapters look thin)`;
+  }
+  return digest;
 }
 
 const SYSTEM_PROMPT = `You are the ghostwriter of a "Handover Book": a bound, evidence-linked document written for the engineer taking over a departing colleague's work.
@@ -200,7 +205,13 @@ function implicitKnowledge(input: SynthesisInput): BookChapter {
   if (soleMaintainer.length === 0 && soleReviewer.length === 0) {
     lines.push('No single-person knowledge concentrations were detected in the collected history.');
   }
-  return { id: 2, title: CHAPTER_TITLES[2], content: lines.join('\n'), evidence: [], generatedBy: 'deterministic' };
+  return {
+    id: 2,
+    title: CHAPTER_TITLES[2],
+    content: lines.join('\n'),
+    evidence: [...soleMaintainer, ...soleReviewer].flatMap((item) => item.evidence),
+    generatedBy: 'deterministic',
+  };
 }
 
 function riskChapter(risks: RiskItem[]): BookChapter {
@@ -225,7 +236,13 @@ function riskChapter(risks: RiskItem[]): BookChapter {
   if (risks.length === 0) {
     lines.push('No risk items — was any history collected?');
   }
-  return { id: 3, title: CHAPTER_TITLES[3], content: lines.join('\n'), evidence: [], generatedBy: 'deterministic' };
+  return {
+    id: 3,
+    title: CHAPTER_TITLES[3],
+    content: lines.join('\n'),
+    evidence: risks.flatMap((risk) => risk.evidence),
+    generatedBy: 'deterministic',
+  };
 }
 
 function decisionFallback(input: SynthesisInput): BookChapter {

@@ -85,6 +85,10 @@ describe('computeRisk', () => {
     expect(top.evidence.some((ref) => ref.kind === 'commit' && ref.excerpt?.includes('#101'))).toBe(true);
     expect(top.evidence.some((ref) => ref.kind === 'review')).toBe(true);
     expect(top.rationale).toContain('#101');
+    // every evidence item deep-links into the repo it came from
+    for (const ref of top.evidence) {
+      expect(ref.url).toMatch(new RegExp(`^https://github.com/${REPO}/`));
+    }
   });
 
   it('falls back to lifetime activity when the repo has been quiet inside the window', () => {
@@ -101,5 +105,22 @@ describe('computeRisk', () => {
     const store = HandoverStore.inMemory();
     store.upsertCommit(commit('q'.padEnd(40, '0'), 'bob', isoDaysAgo(1), 'ops/runbook.md'));
     expect(computeRisk(store, 'alice', { now: NOW })).toHaveLength(0);
+  });
+
+  it('counts a multi-file commit within one module once, not per file', () => {
+    const store = HandoverStore.inMemory();
+    const multi = commit('m'.padEnd(40, '0'), 'alice', isoDaysAgo(1), 'payments/a.ts');
+    store.upsertCommit({
+      ...multi,
+      files: [
+        { path: 'payments/a.ts', additions: 1, deletions: 0 },
+        { path: 'payments/b.ts', additions: 1, deletions: 0 },
+        { path: 'docs/x.md', additions: 1, deletions: 0 },
+      ],
+    });
+    const risks = computeRisk(store, 'alice', { now: NOW });
+    const payments = risks.find((risk) => risk.module === `${REPO}:payments`);
+    expect(payments?.factors.soleContributionRatio).toBe(1);
+    expect(payments?.factors.changeFrequency).toBe(1); // one commit, not two files' worth
   });
 });

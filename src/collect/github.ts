@@ -17,12 +17,17 @@ export interface CollectOptions {
   onProgress?: (message: string) => void;
 }
 
+/** Parallel detail fetches per repo; commit details are one request per commit. */
+const DETAIL_CONCURRENCY = 8;
+
 export interface CollectResult {
   indexedCommits: number;
   skippedCommits: number;
   pullRequests: number;
+  skippedPullRequests: number;
   reviews: number;
   issues: number;
+  skippedIssues: number;
 }
 
 interface RepoSlug {
@@ -30,12 +35,27 @@ interface RepoSlug {
   repo: string;
 }
 
-function parseRepo(fullName: string): RepoSlug {
-  const [owner, repo] = fullName.split('/');
-  if (!owner || !repo) {
+export function parseRepoSlug(fullName: string): RepoSlug {
+  const parts = fullName.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(`Invalid repository "${fullName}" — expected "owner/name"`);
   }
-  return { owner, repo };
+  return { owner: parts[0]!, repo: parts[1]! };
+}
+
+/** Adds a hint for the two failures users actually hit: bad token and rate limits. */
+function explainGitHubError(error: unknown): Error {
+  const status = (error as { status?: number }).status;
+  const message = error instanceof Error ? error.message : String(error);
+  if (status === 401) {
+    return new Error(`GitHub rejected the credentials (401) — check that GITHUB_TOKEN is valid. (${message})`);
+  }
+  if (status === 403 && /rate limit/i.test(message)) {
+    return new Error(
+      `GitHub rate limit exceeded (403). Set GITHUB_TOKEN to raise the limit from 60 to 5000 requests/hour. (${message})`,
+    );
+  }
+  return error instanceof Error ? error : new Error(message);
 }
 
 /**
@@ -45,8 +65,10 @@ function parseRepo(fullName: string): RepoSlug {
  */
 export class GitHubCollector {
   private readonly octokit: Octokit;
+  private readonly octokitTokenWasProvided: boolean;
 
   constructor(token: string) {
+    this.octokitTokenWasProvided = token.trim().length > 0;
     this.octokit = new Octokit({ auth: token || undefined, userAgent: 'handover-book' });
   }
 
@@ -56,6 +78,24 @@ export class GitHubCollector {
     repos: string[],
     options: CollectOptions = {},
   ): Promise<CollectResult> {
+    if (!this.octokitTokenWasProvided) {
+      options.onProgress?.(
+        'warning: no GITHUB_TOKEN set — unauthenticated requests are limited to 60/hour and private repos are invisible.',
+      );
+    }
+    try {
+      return await this.collectIntoInner(store, username, repos, options);
+    } catch (error) {
+      throw explainGitHubError(error);
+    }
+  }
+
+  private async collectIntoInner(
+    store: HandoverStore,
+    username: string,
+    repos: string[],
+    options: CollectOptions,
+  ): Promise<CollectResult> {
     const progress = options.onProgress ?? (() => {});
     const login = await this.resolveLogin(username);
     progress(`GitHub user resolved as @${login}`);
@@ -64,12 +104,14 @@ export class GitHubCollector {
       indexedCommits: 0,
       skippedCommits: 0,
       pullRequests: 0,
+      skippedPullRequests: 0,
       reviews: 0,
       issues: 0,
+      skippedIssues: 0,
     };
 
     for (const fullName of repos) {
-      const { owner, repo } = parseRepo(fullName);
+      const { owner, repo } = parseRepoSlug(fullName);
       const name = `${owner}/${repo}`;
       progress(`Collecting ${name} …`);
       await this.collectCommits(store, owner, repo, options, result);
@@ -79,6 +121,7 @@ export class GitHubCollector {
 
     store.setMeta('last_collected_at', new Date().toISOString());
     store.setMeta('collected_for', login);
+    store.setMeta('repos', repos.join(','));
     return result;
   }
 
@@ -147,43 +190,70 @@ export class GitHubCollector {
     result: CollectResult,
   ): Promise<void> {
     const name = `${owner}/${repo}`;
-    for await (const item of this.paginate<{ sha?: string; author?: { login?: string } | null; commit?: { author?: { date?: string }; message?: string } }>(
-      'listCommits',
-      { owner, repo },
-      options.since,
-    )) {
-      const sha = item.sha ?? '';
-      if (!sha) {
-        continue;
+    const pending: Array<{ sha: string; authorLogin: string; authoredAt?: string; message?: string }> = [];
+    try {
+      for await (const item of this.paginate<{ sha?: string; author?: { login?: string } | null; commit?: { author?: { date?: string }; message?: string } }>(
+        'listCommits',
+        { owner, repo },
+        options.since,
+      )) {
+        const sha = item.sha ?? '';
+        if (!sha) {
+          continue;
+        }
+        if (!options.refresh && store.hasCommit(name, sha)) {
+          result.skippedCommits += 1;
+          continue;
+        }
+        pending.push({
+          sha,
+          authorLogin: item.author?.login ?? 'unknown',
+          authoredAt: item.commit?.author?.date,
+          message: item.commit?.message,
+        });
       }
-      if (!options.refresh && store.hasCommit(name, sha)) {
-        result.skippedCommits += 1;
-        continue;
+    } catch (error) {
+      // An empty repository fails the commit listing itself — nothing to collect.
+      if ((error as { status?: number }).status === 409) {
+        return;
       }
-      const detail = await this.octokit.rest.repos.getCommit({ owner, repo, ref: sha });
-      const files = (detail.data.files ?? [])
-        .filter((file) => typeof file.filename === 'string')
-        .map((file) => ({
-          path: file.filename as string,
-          additions: file.additions ?? 0,
-          deletions: file.deletions ?? 0,
-        }));
-      const commit: CommitRecord = {
-        sha,
-        repo: name,
-        authorLogin: item.author?.login ?? 'unknown',
-        authoredAt: item.commit?.author?.date ?? detail.data.commit.author?.date ?? new Date().toISOString(),
-        message: item.commit?.message ?? detail.data.commit.message ?? '',
-        additions: detail.data.stats?.additions ?? files.reduce((sum, file) => sum + file.additions, 0),
-        deletions: detail.data.stats?.deletions ?? files.reduce((sum, file) => sum + file.deletions, 0),
-        files,
-      };
-      store.upsertCommit(commit);
-      result.indexedCommits += 1;
-      if (result.indexedCommits % 50 === 0) {
-        options.onProgress?.(`  indexed ${result.indexedCommits} new commits in ${name} …`);
-      }
+      throw error;
     }
+
+    // Commit details are one request per commit; bounded concurrency keeps
+    // large repos from crawling while staying polite to the API.
+    let next = 0;
+    let done = 0;
+    const worker = async (): Promise<void> => {
+      while (next < pending.length) {
+        const item = pending[next++]!;
+        const detail = await this.octokit.rest.repos.getCommit({ owner, repo, ref: item.sha });
+        const files = (detail.data.files ?? [])
+          .filter((file) => typeof file.filename === 'string')
+          .map((file) => ({
+            path: file.filename as string,
+            additions: file.additions ?? 0,
+            deletions: file.deletions ?? 0,
+          }));
+        const commit: CommitRecord = {
+          sha: item.sha,
+          repo: name,
+          authorLogin: item.authorLogin,
+          authoredAt: item.authoredAt ?? detail.data.commit.author?.date ?? new Date().toISOString(),
+          message: item.message ?? detail.data.commit.message ?? '',
+          additions: detail.data.stats?.additions ?? files.reduce((sum, file) => sum + file.additions, 0),
+          deletions: detail.data.stats?.deletions ?? files.reduce((sum, file) => sum + file.deletions, 0),
+          files,
+        };
+        store.upsertCommit(commit);
+        result.indexedCommits += 1;
+        done += 1;
+        if (done % 50 === 0) {
+          options.onProgress?.(`  indexed ${done} new commits in ${name} …`);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(DETAIL_CONCURRENCY, pending.length) }, worker));
   }
 
   private async collectPullRequests(
@@ -212,6 +282,13 @@ export class GitHubCollector {
       }
       const createdAt = pr.created_at ?? new Date().toISOString();
       if (options.since && createdAt < options.since) {
+        // PRs are listed newest-first by creation, so every later page is older too.
+        break;
+      }
+      // An indexed PR already carries its files, reviews and comments; skipping
+      // it here is what makes second runs near-instant.
+      if (!options.refresh && store.hasPullRequest(name, number)) {
+        result.skippedPullRequests += 1;
         continue;
       }
       const record: PullRequestRecord = {
@@ -332,11 +409,16 @@ export class GitHubCollector {
       }
       const createdAt = issue.created_at ?? new Date().toISOString();
       if (options.since && createdAt < options.since) {
-        continue;
+        // issues are listed newest-first by creation — stop at the first old one
+        break;
       }
       // PR entries appear in the issues listing too; their conversations are
       // already collected by collectPullRequests, so skip them here.
       if (issue.pull_request !== undefined) {
+        continue;
+      }
+      if (!options.refresh && store.hasIssue(name, number)) {
+        result.skippedIssues += 1;
         continue;
       }
       const comments: CommentRecord[] = [];

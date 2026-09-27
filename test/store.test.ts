@@ -86,4 +86,20 @@ describe('HandoverStore', () => {
     const map = store.allPrFiles();
     expect(map.get(`${REPO}#42`)).toEqual(['payments/a.ts', 'payments/b.ts', 'docs/x.md']);
   });
+
+  it('reports which PRs and issues are already indexed', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertPullRequest({
+      repo: REPO, number: 1, title: 't', authorLogin: 'alice', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', mergedAt: null, body: '', additions: 0, deletions: 0, changedFiles: 0,
+    });
+    store.upsertIssue({
+      repo: REPO, number: 10, title: 't', authorLogin: 'bob', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', closedAt: null, labels: [], comments: [],
+    });
+    expect(store.hasPullRequest(REPO, 1)).toBe(true);
+    expect(store.hasPullRequest(REPO, 2)).toBe(false);
+    expect(store.hasIssue(REPO, 10)).toBe(true);
+    expect(store.hasIssue(REPO, 11)).toBe(false);
+  });
 });

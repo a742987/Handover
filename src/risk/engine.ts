@@ -99,8 +99,14 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     }
     const isRecent = commit.authoredAt >= windowStartIso;
     const isUser = commit.authorLogin === username;
+    // a commit touching several files of one module counts once, not per file
+    const countedModules = new Set<string>();
     for (const file of commit.files) {
       const key = `${commit.repo}:${moduleOf(file.path)}`;
+      if (countedModules.has(key)) {
+        continue;
+      }
+      countedModules.add(key);
       const module = acc(key);
       module.total += 1;
       if (isRecent) {
@@ -167,21 +173,34 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     };
 
     const evidence: EvidenceRef[] = [];
+    // module keys are "owner/name:module" — the repo prefix builds deep links
+    const repoSlug = module.key.slice(0, module.key.indexOf(':')) || module.key;
     const recentCommits = [...module.userCommits]
       .sort((a, b) => b.authoredAt.localeCompare(a.authoredAt))
       .slice(0, 3);
     for (const commit of recentCommits) {
-      evidence.push({ kind: 'commit', ref: commit.sha.slice(0, 7), excerpt: firstLine(commit.message) });
+      evidence.push({
+        kind: 'commit',
+        ref: commit.sha.slice(0, 7),
+        url: `https://github.com/${repoSlug}/commit/${commit.sha}`,
+        excerpt: firstLine(commit.message),
+      });
     }
     if (soleReviewer && module.exampleReview) {
       evidence.push({
         kind: 'review',
         ref: `#${module.exampleReview.prNumber} review:${module.exampleReview.id}`,
+        url: `https://github.com/${repoSlug}/pull/${module.exampleReview.prNumber}#pullrequestreview-${module.exampleReview.id}`,
         excerpt: `all ${module.reviewTotal} reviews on this module's PRs were by @${username}`,
       });
     }
     for (const issueNumber of [...module.bugIssues].slice(0, 2)) {
-      evidence.push({ kind: 'issue', ref: `#${issueNumber}`, excerpt: 'bug-labelled issue referenced from this module' });
+      evidence.push({
+        kind: 'issue',
+        ref: `#${issueNumber}`,
+        url: `https://github.com/${repoSlug}/issues/${issueNumber}`,
+        excerpt: 'bug-labelled issue referenced from this module',
+      });
     }
 
     const parts = [

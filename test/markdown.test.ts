@@ -42,6 +42,28 @@ describe('renderBook', () => {
     expect(markdown).toContain('fix crash in settlement (#101)');
   });
 
+  it('renders evidence URLs as links and escapes pipes in excerpts', () => {
+    const withLinks: HandoverBook = {
+      ...book,
+      chapters: [
+        {
+          id: 4,
+          title: CHAPTER_TITLES[4],
+          content: 'Settlement moved to T+1 [abc1234].',
+          evidence: [
+            { kind: 'commit', ref: 'abc1234', url: 'https://github.com/acme/api/commit/abc1234', excerpt: 'fix | crash' },
+            { kind: 'issue', ref: '#101', excerpt: 'plain excerpt' },
+          ],
+          generatedBy: 'llm',
+        },
+      ],
+    };
+    const markdown = renderBook(withLinks);
+    expect(markdown).toContain('[`abc1234`](https://github.com/acme/api/commit/abc1234)');
+    expect(markdown).toContain('`#101`'); // no URL → plain code span
+    expect(markdown).toContain('fix \\| crash');
+  });
+
   it('lists all six chapter titles in order', () => {
     expect(CHAPTER_TITLES[1]).toBe('Code Panorama');
     expect(CHAPTER_TITLES[2]).toBe('Implicit Knowledge Inventory');

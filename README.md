@@ -38,7 +38,7 @@ npm run dev -- gen <username> --repo owner/name
 
 Output lands in `handover-data/`:
 
-- `handover-data/<username>.db` — the local SQLite index (one file per person; second runs are near-instant)
+- `handover-data/<username>.db` — the local SQLite index (one file per person; second runs are incremental and near-instant)
 - `handover-data/handover-book-<username>.md` — the bound book
 
 ### Commands
@@ -46,11 +46,11 @@ Output lands in `handover-data/`:
 | Command | What it does |
 |---|---|
 | `gen <username> -r owner/name` | collect → analyze → render the full book |
-| `collect <username> -r owner/name` | index GitHub history only |
+| `collect <username> -r owner/name` | index GitHub history only (commits, PRs, reviews and issues already in the index are skipped) |
 | `risk <username>` | print the Risk Top 5 from the local index |
-| `render <username> -r owner/name` | re-render the book from the index (no network) |
+| `render <username>` | re-render the book from the index (no network; repositories are read from the index, pass `-r` to override) |
 
-Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`.
+Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed).
 
 ### LLM providers
 
@@ -71,7 +71,7 @@ risk = sole_contribution_ratio
      × irreplaceability            (sole reviewer +0.5, sole author +0.25)
 ```
 
-Every Risk Top 5 item lists the exact commits, reviews, and issues that justify its score. The formula lives in [`src/risk/engine.ts`](src/risk/engine.ts) — read it, challenge it, tune it.
+Every Risk Top 5 item lists the exact commits, reviews, and issues that justify its score — each one a deep link into the repo. The formula lives in [`src/risk/engine.ts`](src/risk/engine.ts) — read it, challenge it, tune it.
 
 ## Architecture
 

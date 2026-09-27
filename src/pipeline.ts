@@ -94,17 +94,31 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
       onProgress,
     });
     onProgress(
-      `Collection done: ${collected.indexedCommits} new commits indexed (${collected.skippedCommits} already cached), ${collected.pullRequests} PRs, ${collected.reviews} reviews, ${collected.issues} issues.`,
+      `Collection done: ${collected.indexedCommits} new commits indexed (${collected.skippedCommits} already cached), ${collected.pullRequests} PRs (${collected.skippedPullRequests} cached), ${collected.reviews} reviews, ${collected.issues} issues (${collected.skippedIssues} cached).`,
     );
+    const collectedTotal =
+      collected.indexedCommits +
+      collected.skippedCommits +
+      collected.pullRequests +
+      collected.skippedPullRequests +
+      collected.reviews +
+      collected.issues +
+      collected.skippedIssues;
+    if (collectedTotal === 0) {
+      onProgress(
+        `warning: no GitHub activity found for @${options.username} in ${options.repos.join(', ')} — check the username, the repo names, and the --since window.`,
+      );
+    }
     return await finishFromStore(store, config, options.username, options.repos, onProgress);
   } finally {
     store.close();
   }
 }
 
-/** Re-render the book from an existing SQLite index, without touching the network. */
+/** Re-render the book from an existing SQLite index, without touching the network.
+ *  When `repos` is omitted, the list recorded at collect time is used. */
 export async function renderHandoverBook(
-  options: Omit<GenerateOptions, 'since' | 'refresh' | 'githubToken'>,
+  options: Omit<GenerateOptions, 'since' | 'refresh' | 'githubToken' | 'repos'> & { repos?: string[] },
 ): Promise<GenerateResult> {
   const config = loadConfig({
     dataDir: options.dataDir,
@@ -114,7 +128,20 @@ export async function renderHandoverBook(
   const onProgress = options.onProgress ?? (() => {});
   const store = new HandoverStore(dbPathFor(config, options.username));
   try {
-    return await finishFromStore(store, config, options.username, options.repos, onProgress);
+    let repos = options.repos ?? [];
+    if (repos.length === 0) {
+      repos = (store.getMeta('repos') ?? '')
+        .split(',')
+        .map((repo) => repo.trim())
+        .filter(Boolean);
+      if (repos.length === 0) {
+        throw new Error(
+          `The index for @${options.username} does not record any repositories — pass -r owner/name, or collect first.`,
+        );
+      }
+      onProgress(`Using repositories from the index: ${repos.join(', ')}`);
+    }
+    return await finishFromStore(store, config, options.username, repos, onProgress);
   } finally {
     store.close();
   }
