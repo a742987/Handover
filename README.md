@@ -85,6 +85,38 @@ Every Risk Top 5 item lists the exact commits, reviews, and issues that justify 
           └────────── SQLite index (one file per person, cacheable) ─────────┘
 ```
 
+## Editor plugins
+
+The same CLI drives three integrations. The common layer is a **built-in MCP server** (`handover-mcp`, ships in the npm package) that exposes `handover_generate`, `handover_collect`, `handover_risk`, and `handover_render` as tools — any MCP client can use it without shelling out to the CLI.
+
+```bash
+npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
+```
+
+**Claude Code** — install the bundled plugin:
+
+```
+/plugin marketplace add <this-repo>
+/plugin install handover@handover
+```
+
+The plugin registers the `handover` MCP server automatically (via the `mcpServers` field in [`plugin/.claude-plugin/plugin.json`](plugin/.claude-plugin/plugin.json)) and adds:
+
+- `/handover:gen <username> --repo owner/name` — full pipeline, then a summarized Risk Top 5
+- `/handover:risk <username>` — Risk Top 5 from an existing index
+- a skill that teaches the agent when and how to run the pipeline ([`plugin/skills/handover/SKILL.md`](plugin/skills/handover/SKILL.md))
+
+**Codex** — two lines:
+
+1. Register the MCP server in `~/.codex/config.toml`:
+   ```toml
+   [mcp_servers.handover]
+   command = "handover-mcp"
+   ```
+2. Copy [`codex/handover.md`](codex/handover.md) to `~/.codex/prompts/handover.md`, then run `/handover <username> --repo owner/name`.
+
+**Any other MCP client** (Cursor, ZCode, …) — register `handover-mcp` as a stdio server; same four tools everywhere.
+
 ## Privacy and ethics — read this before you run it for someone
 
 - **A gift, not an audit.** Handover exists to hand a successor the map, never to grade the person leaving. Run it *with* the departing engineer, not around them. Their review comments and commit messages are quoted back to colleagues — if they wouldn't say it in a farewell doc, it doesn't belong in the book.
@@ -107,6 +139,7 @@ Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM p
 ## Roadmap
 
 - [x] Repo scaffold: CLI + Octokit collection + SQLite index + risk engine + Markdown book
+- [x] MCP server (`handover-mcp`) + Claude Code plugin + Codex prompt
 - [ ] `npx handover-book gen` end-to-end on a real public repo (MVP, weeks 1–3)
 - [ ] PDF / HTML output and the page-turn demo
 - [ ] 30-Day Path + Letter to the Future with LLM style-transfer polish (v0.2)

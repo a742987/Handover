@@ -1,0 +1,13 @@
+{
+  "name": "handover",
+  "owner": {
+    "name": "Handover contributors"
+  },
+  "plugins": [
+    {
+      "name": "handover",
+      "source": "./plugin",
+      "description": "Turns a departing engineer's GitHub history into a bound, evidence-linked Handover Book."
+    }
+  ]
+}
