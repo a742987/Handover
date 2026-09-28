@@ -14,14 +14,17 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { loadConfig, type LlmProviderName } from './config.js';
 import { sameLogin } from './identity.js';
+import { parseSince } from './args.js';
 import { applyAnswers } from './capture.js';
 import { searchIndex } from './search.js';
 import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
 import { GitHubCollector } from './collect/github.js';
-import { GitDirectoryCollector } from './collect/git.js';
+import { GitDirectoryCollector, previewLocalRepoKeys } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
+import { redact as redactSecrets } from './render/redact.js';
 import { HandoverStore } from './store/sqlite.js';
 import { requireIndex } from './store/index-check.js';
+import type { RiskItem } from './types.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
@@ -40,9 +43,18 @@ const reposSchema = z
   .array(z.string())
   .describe('owner/name repositories to read, e.g. ["acme/api", "acme/web"]');
 
+// Same validation (and UTC normalization) as the CLI's --since flag — the shape
+// check alone let impossible dates like 2024-13-45 through to the GitHub API.
 const sinceSchema = z
   .string()
-  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/, 'expects an ISO date, e.g. 2024-01-01 or 2024-01-01T10:00:00Z')
+  .transform((value, ctx) => {
+    try {
+      return parseSince(value);
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'expects an ISO date, e.g. 2024-01-01 or 2024-01-01T10:00:00Z' });
+      return z.NEVER;
+    }
+  })
   .optional()
   .describe('only collect activity created after this ISO date, e.g. 2024-01-01');
 
@@ -76,6 +88,18 @@ function errorResult(error: unknown): {
     content: [{ type: 'text', text: `error: ${error instanceof Error ? error.message : String(error)}` }],
     isError: true,
   };
+}
+
+/**
+ * Tool results go to an LLM client — a second egress path the redact flag does
+ * not cover — so evidence excerpts and rationales are always secret-scrubbed.
+ */
+function scrubRisks(risks: RiskItem[]): RiskItem[] {
+  return risks.map((risk) => ({
+    ...risk,
+    rationale: redactSecrets(risk.rationale),
+    evidence: risk.evidence.map((ref) => (ref.excerpt ? { ...ref, excerpt: redactSecrets(ref.excerpt) } : ref)),
+  }));
 }
 
 const server = new McpServer({
@@ -139,7 +163,7 @@ server.registerTool(
             title: chapter.title,
             generatedBy: chapter.generatedBy,
           })),
-          risks: result.risks,
+          risks: scrubRisks(result.risks),
         },
         progress,
       );
@@ -182,12 +206,19 @@ server.registerTool(
       await mkdir(config.dataDir, { recursive: true });
       const store = new HandoverStore(path.join(config.dataDir, `${user}.db`));
       try {
+        // Local repo keys up front so the GitHub collector's orphan cleanup
+        // spares locally-collected history in the same index.
+        let preserve: string[] = [];
+        if (gitDirs?.length) {
+          preserve = await previewLocalRepoKeys(store, gitDirs);
+        }
         let collected = null;
         if (repos.length > 0) {
           const collector = new GitHubCollector(config.githubToken);
           collected = await collector.collectInto(store, user, [...new Set(repos)], {
             since,
             refresh,
+            preserveRepos: preserve,
             onProgress: (message) => progress.push(message),
           });
         }
@@ -236,7 +267,7 @@ server.registerTool(
       try {
         const collectedFor = store.getMeta('collected_for');
         const display = collectedFor && sameLogin(collectedFor, user) ? collectedFor : user;
-        return textResult({ username: display, risks: computeRisk(store, display) }, progress);
+        return textResult({ username: display, risks: scrubRisks(computeRisk(store, display)) }, progress);
       } finally {
         store.close();
       }
@@ -368,7 +399,7 @@ server.registerTool(
             title: chapter.title,
             generatedBy: chapter.generatedBy,
           })),
-          risks: result.risks,
+          risks: scrubRisks(result.risks),
         },
         progress,
       );

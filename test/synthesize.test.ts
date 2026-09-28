@@ -65,6 +65,28 @@ describe('buildDigest', () => {
     expect(digest.length).toBeLessThanOrEqual(500 + 200); // budget plus the truncation note
     expect(digest).toContain('digest truncated at 500 characters');
   });
+
+  it('HTML-escapes repository content so markup cannot reach the LLM verbatim', () => {
+    const store = seedStore();
+    store.upsertPullRequest({
+      repo: REPO,
+      number: 2,
+      title: '<img src=x onerror=alert(1)>',
+      authorLogin: USERNAME,
+      state: 'open',
+      createdAt: '2026-09-03T00:00:00Z',
+      mergedAt: null,
+      body: 'see <script>alert(1)</script>',
+      additions: 1,
+      deletions: 0,
+      changedFiles: 1,
+    });
+    const risks = computeRisk(store, USERNAME, { now: NOW });
+    const digest = buildDigest({ username: USERNAME, repos: [REPO], store, risks });
+    expect(digest).not.toContain('<img');
+    expect(digest).not.toContain('<script>');
+    expect(digest).toContain('&lt;img');
+  });
 });
 
 describe('synthesizeChapters (no provider)', () => {
@@ -108,5 +130,39 @@ describe('synthesizeChapters (no provider)', () => {
       null,
     );
     expect(chapters[2]!.content).toContain('No risk items');
+  });
+});
+
+describe('synthesizeChapters (with provider)', () => {
+  const chapterText =
+    '### Determined\n\nThe retry key must stay stable [a000000], argued in [#1], with ample content to pass the minimum length gate.';
+
+  it('wraps the digest in nonce-delimited untrusted blocks before the Task instruction', async () => {
+    const store = seedStore();
+    const risks = computeRisk(store, USERNAME, { now: NOW });
+    const seen: Array<{ system: string; user: string }> = [];
+    const provider = {
+      name: 'anthropic' as const,
+      model: 'test',
+      complete: async (system: string, user: string) => {
+        seen.push({ system, user });
+        return chapterText;
+      },
+    };
+    const chapters = await synthesizeChapters(
+      { username: USERNAME, repos: [REPO], store, risks, onProgress: () => {} },
+      provider,
+    );
+    expect(chapters[3]!.generatedBy).toBe('llm');
+    expect(seen).toHaveLength(3); // chapters 4-6
+    for (const { system, user } of seen) {
+      const open = /<untrusted-evidence-([0-9a-f]+)>/.exec(user);
+      expect(open).not.toBeNull();
+      expect(user).toContain(`</untrusted-evidence-${open![1]}>`);
+      // evidence first, instruction last — the digest cannot forge a Task line
+      // ahead of the real one without the wrapper making that visible
+      expect(user.indexOf('<untrusted-evidence-')).toBeLessThan(user.lastIndexOf('Task: '));
+      expect(system).toContain('untrusted');
+    }
   });
 });

@@ -56,10 +56,10 @@ npm run dev -- gen <username> --git-dir ~/work/api --git-dir ~/work/web
 | `capture <username>` | 与离职工程师本人对谈，把 TA 的第一人称回答装订进第 6 章（`--answers q.json` 供 agent/脚本非交互使用） |
 | `risk <username> [--json]` | 从本地索引打印风险 Top 5 |
 | `bus-factor <username>` | 团队视角：哪些模块只有一个人在提交，并在仓库带 CODEOWNERS 时合并之 |
-| `gate <username> --files changed.txt` | CI 检查：这组变更是否触碰了独占模块？（`--comment`、`--fail-on-match`；示例见 [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)） |
+| `gate <username> --files changed.txt` | CI 检查：这组变更是否触碰了独占模块？（`--comment`、`--fail-on-match`、`--repo owner/name` 用于限定多仓库索引；示例见 [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)） |
 | `render <username>` | 从索引重新渲染手册，不访问 GitHub（第 4-6 章仅在配置了 API 密钥时才调用 LLM 提供方；可用 `-r` 覆盖索引中记录的仓库） |
 
-常用参数：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`、`--data-dir <dir>`、`--refresh`（重新抓取已索引的内容）、`--html`（同时输出可直接打印的单文件 HTML —— 浏览器打印即得 PDF）、`--redact`（在送入 LLM 摘要和成书前清除已知密钥格式；也可用 `HANDOVER_REDACT=1`）。
+常用参数：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（省略时区的时刻按 UTC 处理）、`--data-dir <dir>`、`--refresh`（重新抓取已索引的内容）、`--html`（同时输出可直接打印的单文件 HTML —— 浏览器打印即得 PDF）、`--redact`（在送入 LLM 摘要和成书前清除已知密钥格式；也可用 `HANDOVER_REDACT=1`）。`gen` 与 `collect` 还接受 `--author <identity>` 用于在本地克隆中匹配离职者的姓名/邮箱；`capture --list` 打印已录制的答案；`bus-factor` 支持 `--top <n>`、`--window <days>` 与 `--json`（供 CI 使用）。
 
 ### LLM 提供方
 
@@ -144,7 +144,7 @@ npm run build       # dist/
 npm run dev -- ...  # run the CLI from source
 ```
 
-技术栈：TypeScript · Node（内置 `node:sqlite`）· Octokit · 可插拔的 LLM 提供方。CI 在每次 push 时运行 typecheck + 测试 + 构建。
+技术栈：TypeScript · Node（内置 `node:sqlite`）· Octokit · 可插拔的 LLM 提供方。CI 在推送到 main 以及每个 pull request 时运行 typecheck + 测试 + 构建。
 
 ## 路线图
 

@@ -298,7 +298,13 @@ export class HandoverStore {
 
   upsertPullRequest(pr: PullRequestRecord): void {
     this.transaction(() => {
-      this.run(
+      this.upsertPullRequestRow(pr);
+    });
+  }
+
+  /** PR row without its own transaction — the bundle composes several of these. */
+  private upsertPullRequestRow(pr: PullRequestRecord): void {
+    this.run(
         `INSERT INTO pull_requests (repo, number, title, author_login, state, created_at, updated_at, head_sha, merged_at, body, additions, deletions, changed_files)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, number) DO UPDATE SET
@@ -327,22 +333,30 @@ export class HandoverStore {
         pr.deletions,
         pr.changedFiles,
       );
-    });
   }
 
   upsertPrFiles(repo: string, prNumber: number, paths: string[]): void {
     this.transaction(() => {
-      this.run('DELETE FROM pr_files WHERE repo = ? AND pr_number = ?', repo, prNumber);
-      const insert = this.db.prepare('INSERT OR REPLACE INTO pr_files (repo, pr_number, path) VALUES (?, ?, ?)');
-      for (const p of paths) {
-        insert.run(repo, prNumber, p);
-      }
+      this.upsertPrFilesInner(repo, prNumber, paths);
     });
+  }
+
+  private upsertPrFilesInner(repo: string, prNumber: number, paths: string[]): void {
+    this.run('DELETE FROM pr_files WHERE repo = ? AND pr_number = ?', repo, prNumber);
+    const insert = this.db.prepare('INSERT OR REPLACE INTO pr_files (repo, pr_number, path) VALUES (?, ?, ?)');
+    for (const p of paths) {
+      insert.run(repo, prNumber, p);
+    }
   }
 
   upsertReview(review: ReviewRecord): void {
     this.transaction(() => {
-      this.run(
+      this.upsertReviewInner(review);
+    });
+  }
+
+  private upsertReviewInner(review: ReviewRecord): void {
+    this.run(
         `INSERT INTO reviews (repo, id, pr_number, reviewer_login, state, submitted_at, body)
          VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, id) DO UPDATE SET
@@ -375,6 +389,31 @@ export class HandoverStore {
           comment.authorLogin,
         );
       }
+  }
+
+  /**
+   * Writes a PR and everything derived from it — file list, reviews with their
+   * inline comments, the mirrored issue row, stale-review cleanup — as one
+   * transaction. The incremental skip treats a stored PR row as "complete", so
+   * the row must never exist without its children (a half-indexed PR would
+   * otherwise silently deflate sole-reviewer ratios forever).
+   */
+  upsertPullRequestBundle(bundle: {
+    pr: PullRequestRecord;
+    paths: string[];
+    reviews: ReviewRecord[];
+    /** review ids present on GitHub; others are deleted (stale review cleanup) */
+    seenReviewIds: number[];
+    issue: IssueRecord;
+  }): void {
+    this.transaction(() => {
+      this.upsertPullRequestRow(bundle.pr);
+      this.upsertPrFilesInner(bundle.pr.repo, bundle.pr.number, bundle.paths);
+      for (const review of bundle.reviews) {
+        this.upsertReviewInner(review);
+      }
+      this.deleteReviewsNotSeenInner(bundle.pr.repo, bundle.pr.number, bundle.seenReviewIds);
+      this.upsertIssueInner(bundle.issue);
     });
   }
 
@@ -390,25 +429,32 @@ export class HandoverStore {
 
   /** Removes reviews (and their comments) that were deleted on GitHub side. Called after refetching a PR. */
   deleteReviewsNotSeen(repo: string, prNumber: number, seenReviewIds: number[]): void {
+    this.transaction(() => {
+      this.deleteReviewsNotSeenInner(repo, prNumber, seenReviewIds);
+    });
+  }
+
+  private deleteReviewsNotSeenInner(repo: string, prNumber: number, seenReviewIds: number[]): void {
     if (seenReviewIds.length === 0) {
       // all reviews deleted — wipe everything for this PR
-      this.transaction(() => {
-        this.run('DELETE FROM review_comments WHERE repo = ? AND pr_number = ?', repo, prNumber);
-        this.run('DELETE FROM reviews WHERE repo = ? AND pr_number = ?', repo, prNumber);
-      });
+      this.run('DELETE FROM review_comments WHERE repo = ? AND pr_number = ?', repo, prNumber);
+      this.run('DELETE FROM reviews WHERE repo = ? AND pr_number = ?', repo, prNumber);
       return;
     }
-    this.transaction(() => {
-      // build the NOT IN list; reviews not in the seen set are deleted
-      const placeholders = seenReviewIds.map(() => '?').join(',');
-      this.run(`DELETE FROM review_comments WHERE repo = ? AND pr_number = ? AND review_id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
-      this.run(`DELETE FROM reviews WHERE repo = ? AND pr_number = ? AND id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
-    });
+    // build the NOT IN list; reviews not in the seen set are deleted
+    const placeholders = seenReviewIds.map(() => '?').join(',');
+    this.run(`DELETE FROM review_comments WHERE repo = ? AND pr_number = ? AND review_id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
+    this.run(`DELETE FROM reviews WHERE repo = ? AND pr_number = ? AND id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
   }
 
   upsertIssue(issue: IssueRecord): void {
     this.transaction(() => {
-      this.run(
+      this.upsertIssueInner(issue);
+    });
+  }
+
+  private upsertIssueInner(issue: IssueRecord): void {
+    this.run(
         `INSERT INTO issues (repo, number, title, author_login, state, created_at, updated_at, closed_at, is_pull_request)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, number) DO UPDATE SET
@@ -440,7 +486,6 @@ export class HandoverStore {
         issue.number,
         issue.comments.map((comment) => ({ ...comment, number: issue.number })),
       );
-    });
   }
 
   setMeta(key: string, value: string): void {
@@ -499,6 +544,56 @@ export class HandoverStore {
     });
   }
 
+  /**
+   * Deletes commits whose SHAs were absent from a complete upstream listing
+   * (history rewrites, force-pushes). Only call with a full, unfiltered listing —
+   * never after a `--since`-bounded one — and only when the listing was non-empty.
+   */
+  pruneCommitsNotSeen(repo: string, shas: string[]): void {
+    if (shas.length === 0) {
+      return;
+    }
+    const placeholders = shas.map(() => '?').join(',');
+    this.transaction(() => {
+      this.run(`DELETE FROM commit_files WHERE repo = ? AND sha NOT IN (${placeholders})`, repo, ...shas);
+      this.run(`DELETE FROM commits WHERE repo = ? AND sha NOT IN (${placeholders})`, repo, ...shas);
+    });
+  }
+
+  /**
+   * Deletes PRs (with their files, reviews, comments and mirrored issue rows)
+   * that were absent from a complete upstream listing. Pass only full,
+   * unfiltered listings and only when non-empty.
+   */
+  prunePullRequestsNotSeen(repo: string, numbers: number[]): void {
+    if (numbers.length === 0) {
+      return;
+    }
+    const placeholders = numbers.map(() => '?').join(',');
+    this.transaction(() => {
+      this.run(`DELETE FROM pr_files WHERE repo = ? AND pr_number NOT IN (${placeholders})`, repo, ...numbers);
+      this.run(`DELETE FROM review_comments WHERE repo = ? AND pr_number NOT IN (${placeholders})`, repo, ...numbers);
+      this.run(`DELETE FROM reviews WHERE repo = ? AND pr_number NOT IN (${placeholders})`, repo, ...numbers);
+      this.run(`DELETE FROM issue_comments WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 1)`, repo, repo, ...numbers);
+      this.run(`DELETE FROM issue_labels WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 1)`, repo, repo, ...numbers);
+      this.run(`DELETE FROM issues WHERE repo = ? AND is_pull_request = 1 AND number NOT IN (${placeholders})`, repo, ...numbers);
+      this.run(`DELETE FROM pull_requests WHERE repo = ? AND number NOT IN (${placeholders})`, repo, ...numbers);
+    });
+  }
+
+  /** Deletes non-PR issues (labels, comments) absent from a complete upstream listing. */
+  pruneIssuesNotSeen(repo: string, numbers: number[]): void {
+    if (numbers.length === 0) {
+      return;
+    }
+    const placeholders = numbers.map(() => '?').join(',');
+    this.transaction(() => {
+      this.run(`DELETE FROM issue_comments WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 0)`, repo, repo, ...numbers);
+      this.run(`DELETE FROM issue_labels WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 0)`, repo, repo, ...numbers);
+      this.run(`DELETE FROM issues WHERE repo = ? AND is_pull_request = 0 AND number NOT IN (${placeholders})`, repo, ...numbers);
+    });
+  }
+
   allCommits(): CommitRecord[] {
     const filesByCommit = new Map<string, CommitFile[]>();
     for (const row of this.all('SELECT repo, sha, path, additions, deletions FROM commit_files')) {
@@ -513,7 +608,8 @@ export class HandoverStore {
       });
       filesByCommit.set(key, files);
     }
-    return this.all('SELECT * FROM commits ORDER BY authored_at ASC').map((row) => {
+    // Deterministic order: same timestamp → same sequence on every machine.
+    return this.all('SELECT * FROM commits ORDER BY authored_at ASC, repo ASC, sha ASC').map((row) => {
       const repo = str(row['repo']);
       const sha = str(row['sha']);
       return {

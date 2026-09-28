@@ -34,6 +34,14 @@ describe('matchTouchedModules', () => {
     expect(comment).toContain('a1b2c3d');
     expect(renderGateComment([], 'alice')).toContain('does not touch');
   });
+
+  it('restricts matching to one repository when the index holds several', () => {
+    const multi = [risk('acme/api:payments'), risk('acme/web:payments')];
+    const all = matchTouchedModules(multi, ['payments/x.ts']).map((match) => match.module);
+    expect(all).toEqual(['acme/api:payments', 'acme/web:payments']);
+    const scoped = matchTouchedModules(multi, ['payments/x.ts'], 'acme/web').map((match) => match.module);
+    expect(scoped).toEqual(['acme/web:payments']);
+  });
 });
 
 describe('searchIndex', () => {
@@ -87,6 +95,17 @@ describe('searchIndex', () => {
       comments: [],
       isPullRequest: true,
     });
+    // an inline, per-path review comment (the most substantive review text)
+    s.upsertReview({
+      id: 900,
+      repo: 'acme/api',
+      prNumber: 9,
+      reviewerLogin: 'carol',
+      state: 'COMMENTED',
+      submittedAt: '2026-09-01T00:00:00Z',
+      body: '',
+      comments: [{ id: 901, reviewId: 900, path: 'queue/consume.ts', body: 'the queue consumer needs a poison-pill guard', authorLogin: 'carol' }],
+    });
     return s;
   }
 
@@ -119,5 +138,18 @@ describe('searchIndex', () => {
 
   it('limits results', () => {
     expect(searchIndex(store, { query: 'queue', limit: 2 }).results).toHaveLength(2);
+  });
+
+  it('searches inline review comments too', () => {
+    const { results } = searchIndex(store, { query: 'poison-pill', kind: 'comment' });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.ref).toContain('review:900');
+    expect(results[0]?.ref).toContain('comment:901');
+    expect(results[0]?.author).toBe('carol');
+  });
+
+  it('matches a repo basename but never across owners', () => {
+    expect(searchIndex(store, { query: 'queue', repo: 'api' }).count).toBeGreaterThan(0);
+    expect(searchIndex(store, { query: 'queue', repo: 'evil/api' }).count).toBe(0);
   });
 });

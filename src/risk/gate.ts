@@ -13,8 +13,10 @@ export interface GateMatch {
  * Which of the ranked sole-owner modules appear in a changed-file list.
  * Paths are repo-relative (as `gh pr diff --name-only` prints them); a risk
  * module "owner/name:dir" matches when any path's top-level dir is `dir`.
+ * When `repo` is given, only that repository's risk items match — without it,
+ * a multi-repo index flags the module name in every repo that has one.
  */
-export function matchTouchedModules(risks: RiskItem[], changedPaths: string[]): GateMatch[] {
+export function matchTouchedModules(risks: RiskItem[], changedPaths: string[], repo?: string): GateMatch[] {
   const touched = new Set<string>();
   for (const p of changedPaths) {
     const trimmed = p.trim();
@@ -22,11 +24,16 @@ export function matchTouchedModules(risks: RiskItem[], changedPaths: string[]): 
       touched.add(moduleOf(trimmed));
     }
   }
+  const repoFilter = repo?.toLowerCase();
   return risks
     .filter((risk) => {
       const colon = risk.module.indexOf(':');
+      const riskRepo = (colon === -1 ? risk.module : risk.module.slice(0, colon)).toLowerCase();
       const moduleName = colon === -1 ? risk.module : risk.module.slice(colon + 1);
-      return touched.has(moduleName);
+      if (!touched.has(moduleName)) {
+        return false;
+      }
+      return !repoFilter || riskRepo === repoFilter;
     })
     .map((risk) => ({
       module: risk.module,

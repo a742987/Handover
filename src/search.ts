@@ -72,7 +72,12 @@ export function searchIndex(store: HandoverStore, filter: SearchFilter = {}): { 
     if (!filter.repo) {
       return true;
     }
-    return repo === filter.repo || repo.split('/').pop() === filter.repo.split('/').pop();
+    if (repo === filter.repo) {
+      return true;
+    }
+    // A bare name ("api") may match "owner/api" — but "acme/api" must never
+    // match a second owner's repo with the same basename.
+    return !filter.repo.includes('/') && repo.split('/').pop() === filter.repo;
   };
 
   if (kind === 'all' || kind === 'commit') {
@@ -108,20 +113,37 @@ export function searchIndex(store: HandoverStore, filter: SearchFilter = {}): { 
       });
     }
   }
-  if (kind === 'all' || kind === 'review') {
+  if (kind === 'all' || kind === 'review' || kind === 'comment') {
     for (const review of store.allReviews()) {
-      if (!repoAllowed(review.repo) || !matches(review.body, review.submittedAt, review.reviewerLogin)) {
-        continue;
+      if ((kind === 'all' || kind === 'review') && repoAllowed(review.repo) && matches(review.body, review.submittedAt, review.reviewerLogin)) {
+        items.push({
+          kind: 'review',
+          repo: review.repo,
+          ref: `review:${review.id}`,
+          author: review.reviewerLogin,
+          date: review.submittedAt,
+          excerpt: firstLine(review.body || review.state, 300),
+          url: githubUrl('pr', review.repo, `#${review.prNumber}`),
+        });
       }
-      items.push({
-        kind: 'review',
-        repo: review.repo,
-        ref: `review:${review.id}`,
-        author: review.reviewerLogin,
-        date: review.submittedAt,
-        excerpt: firstLine(review.body || review.state, 300),
-        url: githubUrl('pr', review.repo, `#${review.prNumber}`),
-      });
+      // Inline, per-path review comments are the most substantive text in a
+      // review — searchable alongside issue/PR conversation comments.
+      if (kind === 'all' || kind === 'comment') {
+        for (const comment of review.comments) {
+          if (!repoAllowed(review.repo) || !matches(comment.body, review.submittedAt, comment.authorLogin)) {
+            continue;
+          }
+          items.push({
+            kind: 'comment',
+            repo: review.repo,
+            ref: `#${review.prNumber} review:${review.id} comment:${comment.id}`,
+            author: comment.authorLogin,
+            date: review.submittedAt,
+            excerpt: firstLine(comment.body, 300),
+            url: githubUrl('pr', review.repo, `#${review.prNumber}`),
+          });
+        }
+      }
     }
   }
   if (kind === 'all' || kind === 'issue' || kind === 'comment') {

@@ -53,7 +53,7 @@ program
   .option('--author <identity>', 'git author name/email substring for --git-dir matching (default: the username)')
   .option('--provider <provider>', 'LLM provider: openai | anthropic | ollama')
   .option('--model <model>', 'LLM model override')
-  .option('--since <date>', 'only collect activity created after this ISO date', parseSince)
+  .option('--since <date>', 'only collect activity created after this ISO date (zoneless times are treated as UTC)', parseSince)
   .option('--data-dir <dir>', 'directory for the SQLite index and the generated book (default: handover-data, or HANDOVER_DATA_DIR)')
   .option('--refresh', 're-fetch commit details even for already-indexed commits', false)
   .option('--redact', 'scrub known secret formats from the LLM digest and the rendered book (or HANDOVER_REDACT=1)')
@@ -103,7 +103,7 @@ program
   .option('-r, --repo <repo...>', 'owner/name repositories to read', parseRepos, [])
   .option('-d, --git-dir <dir...>', 'local git clone directories to read (no token needed)')
   .option('--author <identity>', 'git author name/email substring for --git-dir matching (default: the username)')
-  .option('--since <date>', 'only collect activity created after this ISO date', parseSince)
+  .option('--since <date>', 'only collect activity created after this ISO date (zoneless times are treated as UTC)', parseSince)
   .option('--data-dir <dir>', 'directory for the SQLite index (default: handover-data, or HANDOVER_DATA_DIR)')
   .option('--refresh', 're-fetch commit details even for already-indexed commits', false)
   .action(async (username: string, options: {
@@ -287,9 +287,10 @@ program
   .argument('<username>', 'GitHub username whose index to consult', parseUsername)
   .requiredOption('--files <file>', 'newline-separated changed paths, or - for stdin')
   .option('--data-dir <dir>', 'directory holding the SQLite index (default: handover-data, or HANDOVER_DATA_DIR)')
+  .option('--repo <owner/name>', 'restrict matching to one repository (a multi-repo index can hold the same module name twice)')
   .option('--comment', 'print a markdown PR comment instead of a table')
   .option('--fail-on-match', 'exit 1 when a sole-owned module is touched')
-  .action(async (username: string, options: { files: string; dataDir?: string; comment?: boolean; failOnMatch?: boolean }) => {
+  .action(async (username: string, options: { files: string; dataDir?: string; repo?: string; comment?: boolean; failOnMatch?: boolean }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
@@ -300,7 +301,7 @@ program
       try {
         const collectedFor = store.getMeta('collected_for');
         const display = collectedFor && sameLogin(collectedFor, username) ? collectedFor : username;
-        matches = matchTouchedModules(computeRisk(store, display, { topN: 1000 }), changed);
+        matches = matchTouchedModules(computeRisk(store, display, { topN: 1000 }), changed, options.repo);
       } finally {
         store.close();
       }

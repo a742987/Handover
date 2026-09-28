@@ -88,9 +88,12 @@ describe('GitDirectoryCollector', () => {
     expect(store.getMeta('source')).toBe('local-git');
     expect(store.getMeta('collected_for')).toBe('alice');
     expect(store.getMeta('repos')).toBe(path.basename(dir));
-    // additions parsed from numstat
-    expect(commits[1]?.additions).toBe(1);
-    expect(commits[1]?.files[0]?.path).toBe('payments/charge.ts');
+    // additions parsed from numstat — found by message, not position:
+    // allCommits() sorts by authored_at, and a positional index breaks
+    // whenever any timestamp deviates (the flake this once produced)
+    const refund = commits.find((entry) => entry.message === 'add refund guard');
+    expect(refund?.additions).toBe(1);
+    expect(refund?.files[0]?.path).toBe('payments/charge.ts');
   });
 
   it('skips already-indexed commits on the second run', async () => {
@@ -147,5 +150,68 @@ describe('GitDirectoryCollector', () => {
     const result = await new GitDirectoryCollector().collectInto(store, 'alice', [dir]);
     expect(result.indexedCommits).toBe(0);
     expect(result.skippedCommits).toBe(0);
+  });
+
+  it('stores non-ASCII paths decoded, not octal-escaped', async () => {
+    const dir = await makeRepo();
+    await commitFile(dir, ALICE.name, ALICE.email, '支付/charge.ts', 'export const a = 1;\n', 'unicode module');
+    const store = HandoverStore.inMemory();
+    await new GitDirectoryCollector().collectInto(store, 'alice', [dir]);
+    const commit = store.allCommits().find((entry) => entry.message === 'unicode module');
+    expect(commit?.files[0]?.path).toBe('支付/charge.ts');
+  });
+
+  it('keeps commits whose message contains ASCII control bytes', async () => {
+    const dir = await makeRepo();
+    await commitFile(dir, ALICE.name, ALICE.email, 'src/a.ts', 'x\n', 'first\x1esplit\x1fpart', '2026-09-01T00:00:00Z');
+    await commitFile(dir, ALICE.name, ALICE.email, 'src/b.ts', 'y\n', 'second', '2026-09-02T00:00:00Z');
+    const store = HandoverStore.inMemory();
+    const result = await new GitDirectoryCollector().collectInto(store, 'alice', [dir]);
+    expect(result.indexedCommits).toBe(2);
+    const first = store.allCommits().find((entry) => entry.message.startsWith('first'));
+    expect(first?.message).toBe('first split part');
+    // the record reassembly must not corrupt the numstat that follows
+    expect(first?.files.map((file) => file.path)).toEqual(['src/a.ts']);
+    expect(store.allCommits().some((entry) => entry.message === 'second')).toBe(true);
+  });
+
+  it('keys same-basename clones apart instead of merging their history', async () => {
+    const base = await mkdtemp(path.join(tmpdir(), 'handover-collide-'));
+    tempDirs.push(base);
+    const one = path.join(base, 'one', 'api');
+    const two = path.join(base, 'two', 'api');
+    await mkdir(one, { recursive: true });
+    await mkdir(two, { recursive: true });
+    await gitIn(one, ['init', '-q', '-b', 'main']);
+    await gitIn(two, ['init', '-q', '-b', 'main']);
+    await commitFile(one, ALICE.name, ALICE.email, 'src/one.ts', 'x\n', 'from one');
+    await commitFile(two, BOB.name, BOB.email, 'src/two.ts', 'x\n', 'from two');
+
+    const store = HandoverStore.inMemory();
+    const result = await new GitDirectoryCollector().collectInto(store, 'alice', [one, two]);
+    expect(new Set(result.repos).size).toBe(2);
+    const byRepo = new Map(store.allCommits().map((entry) => [entry.repo, entry.message]));
+    expect(byRepo.size).toBe(2);
+    expect([...byRepo.values()]).toContain('from one');
+    expect([...byRepo.values()]).toContain('from two');
+
+    // the disambiguated key is stable, so incremental skips keep working
+    const second = await new GitDirectoryCollector().collectInto(store, 'alice', [one, two]);
+    expect(second.indexedCommits).toBe(0);
+    expect(second.skippedCommits).toBe(2);
+  });
+
+  it('warns when the cached index was collected with a different identity', async () => {
+    const dir = await makeRepo();
+    await commitFile(dir, 'Zhang', 'zhang@corp.dev', 'src/a.ts', 'x\n', 'hers');
+    const store = HandoverStore.inMemory();
+    const messages: string[] = [];
+    const progress = (message: string): void => {
+      messages.push(message);
+    };
+    await new GitDirectoryCollector().collectInto(store, 'alice', [dir], { identity: 'zhang@corp.dev', onProgress: progress });
+    messages.length = 0;
+    await new GitDirectoryCollector().collectInto(store, 'alice', [dir], { onProgress: progress });
+    expect(messages.some((message) => message.includes('collected with author identity'))).toBe(true);
   });
 });

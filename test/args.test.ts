@@ -23,6 +23,11 @@ describe('parseSince', () => {
     expect(parseSince('2024-01-01T10:30:00+09:00')).toBe('2024-01-01T01:30:00.000Z');
   });
 
+  it('normalizes zoneless date-times to UTC, matching date-only forms', () => {
+    expect(parseSince('2024-01-01T10:30')).toBe('2024-01-01T10:30:00.000Z');
+    expect(parseSince('2024-01-01T10:30:00')).toBe('2024-01-01T10:30:00.000Z');
+  });
+
   it('rejects ambiguous non-ISO formats that new Date() would accept', () => {
     for (const bad of ['Jan 1, 2024', '1/1/2024', '2024', 'last week', '']) {
       expect(() => parseSince(bad)).toThrow(InvalidArgumentError);

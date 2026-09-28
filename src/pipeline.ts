@@ -5,7 +5,7 @@ import type { HandoverBook, RiskItem } from './types.js';
 import { loadConfig, type HandoverConfig, type LlmProviderName } from './config.js';
 import { HandoverStore } from './store/sqlite.js';
 import { GitHubCollector, countCollected } from './collect/github.js';
-import { GitDirectoryCollector } from './collect/git.js';
+import { GitDirectoryCollector, previewLocalRepoKeys } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
 import { synthesizeChapters } from './distill/synthesize.js';
 import { createProvider, type LlmProvider } from './distill/llm.js';
@@ -128,12 +128,21 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
     let collectedTotal = 0;
     const scope = [...repos];
 
+    // Local repo keys up front: the GitHub collector's orphan cleanup must
+    // know about them, or a combined -r/-d run (or any later -r-only run)
+    // wipes the locally-collected history with no warning.
+    let preserveRepos: string[] = [];
+    if (gitDirs.length > 0) {
+      preserveRepos = await previewLocalRepoKeys(store, gitDirs);
+    }
+
     if (repos.length > 0) {
       onProgress(`Collecting GitHub history for @${options.username} …`);
       const collector = new GitHubCollector(config.githubToken);
       const collected = await collector.collectInto(store, options.username, repos, {
         since: options.since,
         refresh: options.refresh,
+        preserveRepos,
         onProgress,
       });
       onProgress(

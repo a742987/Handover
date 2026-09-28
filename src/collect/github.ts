@@ -15,6 +15,12 @@ export interface CollectOptions {
   since?: string;
   /** re-fetch commit details even when the SHA is already indexed */
   refresh?: boolean;
+  /**
+   * Repo names collected from other sources (e.g. local git dirs) that run in
+   * the same pipeline. The orphan cleanup at the start of collection must not
+   * treat them as orphans, or their evidence gets wiped.
+   */
+  preserveRepos?: string[];
   onProgress?: (message: string) => void;
 }
 
@@ -27,7 +33,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** True for failures worth retrying: abuse limits (403/429) and transient 5xx. */
+/** Network/system error codes that mean "the request never reached GitHub". */
+const TRANSIENT_CODE_RE = /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|UND_ERR|ERR_SOCKET)/;
+const TRANSIENT_MESSAGE_RE = /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket hang up|premature close|fetch failed|network error|timeout/i;
+
+/** True for failures worth retrying: abuse limits (403/429), transient 5xx, and connection-level drops. */
 function isRetryable(error: unknown): boolean {
   const status = (error as { status?: number }).status ?? 0;
   const message = error instanceof Error ? error.message : String(error);
@@ -37,6 +47,16 @@ function isRetryable(error: unknown): boolean {
   // GitHub abuse detection ("You have triggered an abuse detection mechanism") often comes with Retry-After
   if (status === 403 && /rate limit|secondary rate|abuse/i.test(message)) {
     return true;
+  }
+  // A missing HTTP status means the request failed below the HTTP layer
+  // (ECONNRESET, ETIMEDOUT, DNS, socket hang up) — the most common transient
+  // failure class on long collect runs, and the reason a run would otherwise
+  // abort mid-way with no retry at all.
+  if (status === 0) {
+    const causeCode = (error as { cause?: { code?: string } }).cause?.code ?? '';
+    if (TRANSIENT_CODE_RE.test(causeCode) || TRANSIENT_MESSAGE_RE.test(message)) {
+      return true;
+    }
   }
   return false;
 }
@@ -72,7 +92,9 @@ export function parseRepoSlug(fullName: string): RepoSlug {
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
     throw new Error(`Invalid repository "${fullName}" — expected "owner/name"`);
   }
-  return { owner: parts[0]!, repo: parts[1]! };
+  // GitHub repos are case-insensitive; one canonical key keeps "Acme/API" and
+  // "acme/api" from being collected (and counted) as two repositories.
+  return { owner: parts[0].toLowerCase(), repo: parts[1].toLowerCase() };
 }
 
 /** Adds a hint for the two failures users actually hit: bad token and rate limits. */
@@ -175,9 +197,11 @@ export class GitHubCollector {
       skippedIssues: 0,
     };
 
-    // Clear orphan data from repos not in the current collection scope.
+    // Clear orphan data from repos not in the current collection scope. Repos
+    // collected from other sources (local git dirs, collected later in the same
+    // run) must be part of that scope or their rows are wiped with no warning.
     const scope = [...new Set(repos)];
-    store.clearRepositoriesExcept(scope);
+    store.clearRepositoriesExcept([...scope, ...(options.preserveRepos ?? [])]);
 
     for (const fullName of scope) {
       const { owner, repo } = parseRepoSlug(fullName);
@@ -284,6 +308,8 @@ export class GitHubCollector {
   ): Promise<void> {
     const name = `${owner}/${repo}`;
     const pending: Array<{ sha: string; authorLogin: string; authoredAt?: string; message?: string }> = [];
+    const seenShas: string[] = [];
+    let listingComplete = false;
     try {
       for await (const item of this.paginate<{ sha?: string; author?: { login?: string } | null; commit?: { author?: { date?: string }; message?: string } }>(
         'listCommits',
@@ -294,6 +320,7 @@ export class GitHubCollector {
         if (!sha) {
           continue;
         }
+        seenShas.push(sha);
         if (!options.refresh && store.hasCommit(name, sha)) {
           result.skippedCommits += 1;
           continue;
@@ -305,12 +332,21 @@ export class GitHubCollector {
           message: item.commit?.message,
         });
       }
+      // Without a --since filter the pagination covered the repo's full default
+      // branch — anything in the index but not in this listing no longer exists
+      // upstream (force-push, history rewrite) and would otherwise haunt the
+      // risk ratios forever. A --since listing is partial, so pruning there
+      // would delete valid older history.
+      listingComplete = !options.since;
     } catch (error) {
       // An empty repository fails the commit listing itself — nothing to collect.
       if ((error as { status?: number }).status === 409) {
         return;
       }
       throw error;
+    }
+    if (listingComplete) {
+      store.pruneCommitsNotSeen(name, seenShas);
     }
 
     // Commit details are one request per commit; bounded concurrency keeps
@@ -326,6 +362,9 @@ export class GitHubCollector {
         const item = pending[next++]!;
         try {
           const detail = await this.octokit.rest.repos.getCommit({ owner, repo, ref: item.sha });
+          // repos.getCommit returns at most 300 files with no pagination — for
+          // the rare commit above that, files beyond the cap are invisible and
+          // under-attribute its modules. `stats` still covers the whole commit.
           const files = (detail.data.files ?? [])
             .filter((file) => typeof file.filename === 'string')
             .map((file) => ({
@@ -337,7 +376,10 @@ export class GitHubCollector {
             sha: item.sha,
             repo: name,
             authorLogin: item.authorLogin,
-            authoredAt: item.authoredAt ?? detail.data.commit.author?.date ?? new Date().toISOString(),
+            // An unknown date must not be fabricated as "now" — that would drop
+            // the commit into the recent-activity window and inflate its risk.
+            // Empty string sorts oldest and never reads as recent.
+            authoredAt: item.authoredAt ?? detail.data.commit.author?.date ?? '',
             message: item.message ?? detail.data.commit.message ?? '',
             additions: detail.data.stats?.additions ?? files.reduce((sum, file) => sum + file.additions, 0),
             deletions: detail.data.stats?.deletions ?? files.reduce((sum, file) => sum + file.deletions, 0),
@@ -369,6 +411,7 @@ export class GitHubCollector {
     result: CollectResult,
   ): Promise<void> {
     const name = `${owner}/${repo}`;
+    const seenNumbers: number[] = [];
     for await (const pr of this.paginate<{
       number?: number;
       title?: string;
@@ -388,7 +431,8 @@ export class GitHubCollector {
       if (number === undefined) {
         continue;
       }
-      const createdAt = pr.created_at ?? new Date().toISOString();
+      seenNumbers.push(number);
+      const createdAt = pr.created_at ?? '';
       if (options.since && createdAt < options.since) {
         // PRs are listed newest-first by creation, so every later page is older too.
         break;
@@ -417,8 +461,6 @@ export class GitHubCollector {
         deletions: pr.deletions ?? 0,
         changedFiles: pr.changed_files ?? 0,
       };
-      store.upsertPullRequest(record);
-      result.pullRequests += 1;
 
       const paths: string[] = [];
       for await (const { data: filePage } of this.octokit.paginate.iterator(this.octokit.rest.pulls.listFiles, {
@@ -433,7 +475,6 @@ export class GitHubCollector {
           }
         }
       }
-      store.upsertPrFiles(name, number, paths);
 
       const reviewCommentsByReview = new Map<number, ReviewCommentRecord[]>();
       for await (const { data: commentPage } of this.octokit.paginate.iterator(
@@ -457,6 +498,7 @@ export class GitHubCollector {
         }
       }
 
+      const reviewRecords: ReviewRecord[] = [];
       const reviewIdsSeen = new Set<number>();
       for await (const { data: reviewPage } of this.octokit.paginate.iterator(this.octokit.rest.pulls.listReviews, {
         owner,
@@ -466,7 +508,7 @@ export class GitHubCollector {
       })) {
         for (const review of reviewPage) {
           reviewIdsSeen.add(review.id);
-          const record2: ReviewRecord = {
+          reviewRecords.push({
             id: review.id,
             repo: name,
             prNumber: number,
@@ -475,14 +517,9 @@ export class GitHubCollector {
             submittedAt: review.submitted_at ?? null,
             body: review.body ?? '',
             comments: reviewCommentsByReview.get(review.id) ?? [],
-          };
-          store.upsertReview(record2);
-          result.reviews += 1;
+          });
         }
       }
-      // Reviews deleted on GitHub side are removed from the local index so
-      // sole-reviewer ratios and evidence chains stay accurate.
-      store.deleteReviewsNotSeen(name, number, [...reviewIdsSeen]);
 
       // PR conversations live in the issue-comment namespace
       const prComments = await this.octokit.paginate(this.octokit.rest.issues.listComments, {
@@ -498,9 +535,7 @@ export class GitHubCollector {
         createdAt: comment.created_at ?? '',
         body: comment.body ?? '',
       }));
-      // Mirror the PR into the shared issue namespace so its conversation shows
-      // up wherever the index is read (GitHub uses one number space for both).
-      store.upsertIssue({
+      const mirroredIssue: IssueRecord = {
         repo: name,
         number,
         title: pr.title ?? '',
@@ -512,7 +547,25 @@ export class GitHubCollector {
         labels: [],
         comments,
         isPullRequest: true,
+      };
+
+      // One transaction: the PR row is only visible to the incremental skip
+      // together with its files, reviews and conversation. A crash mid-fetch
+      // leaves the previous state intact and retriable, never a half-indexed PR.
+      store.upsertPullRequestBundle({
+        pr: record,
+        paths,
+        reviews: reviewRecords,
+        seenReviewIds: [...reviewIdsSeen],
+        issue: mirroredIssue,
       });
+      result.pullRequests += 1;
+      result.reviews += reviewRecords.length;
+    }
+    // Same completeness contract as commits: without --since the listing covered
+    // every PR, so anything still in the index was deleted upstream.
+    if (!options.since) {
+      store.prunePullRequestsNotSeen(name, seenNumbers);
     }
   }
 
@@ -524,6 +577,7 @@ export class GitHubCollector {
     result: CollectResult,
   ): Promise<void> {
     const name = `${owner}/${repo}`;
+    const seenNumbers: number[] = [];
     for await (const issue of this.paginate<{
       number?: number;
       title?: string;
@@ -540,7 +594,7 @@ export class GitHubCollector {
       if (number === undefined) {
         continue;
       }
-      const createdAt = issue.created_at ?? new Date().toISOString();
+      const createdAt = issue.created_at ?? '';
       if (options.since && createdAt < options.since) {
         // issues are listed newest-first by creation — stop at the first old one.
         // Note: this means reviews/comments on older PRs/issues (created before --since
@@ -552,6 +606,7 @@ export class GitHubCollector {
       if (issue.pull_request !== undefined) {
         continue;
       }
+      seenNumbers.push(number);
       const updatedAt = issue.updated_at ?? null;
       if (!options.refresh && store.hasIssue(name, number, updatedAt ?? undefined)) {
         result.skippedIssues += 1;
@@ -590,6 +645,10 @@ export class GitHubCollector {
       };
       store.upsertIssue(record);
       result.issues += 1;
+    }
+    // Completeness contract as above: without --since the listing saw every issue.
+    if (!options.since) {
+      store.pruneIssuesNotSeen(name, seenNumbers);
     }
   }
 }

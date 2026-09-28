@@ -100,7 +100,9 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     }
     const authoredAtMs = Date.parse(commit.authoredAt);
     const isRecent = Number.isFinite(authoredAtMs) && authoredAtMs >= windowStartMs;
-    const isUser = sameLogin(commit.authorLogin, username);
+    // 'unknown' is the unattributed-author sentinel; even a login literally
+    // named "unknown" must not fold unattributed commits into their ratio.
+    const isUser = commit.authorLogin !== 'unknown' && sameLogin(commit.authorLogin, username);
     // Exclude 'unknown' authors from total: they are unattributed commits (e.g. email
     // patches, migrations) and would otherwise dilute sole-contribution ratios.
     const isKnownAuthor = commit.authorLogin !== 'unknown';

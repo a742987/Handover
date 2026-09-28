@@ -23,9 +23,56 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!);
 }
 
+function decodeHtmlEntities(value: string): string {
+  const once = (input: string): string =>
+    input
+      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number(dec)))
+      .replace(/&(amp|lt|gt|quot|apos);/gi, (_, name: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[name.toLowerCase()]!);
+  // double-encoded payloads ("&amp;#106;avascript:") need a second pass to be
+  // recognizable as the scheme they really are
+  let out = value;
+  for (let i = 0; i < 3; i += 1) {
+    const next = once(out);
+    if (next === out) {
+      break;
+    }
+    out = next;
+  }
+  return out;
+}
+
+const UNSAFE_SCHEME = /^(javascript|vbscript|data)\s*:/i;
+
+const DANGEROUS_ELEMENTS = /\s*<(script|style|iframe|object|embed|form|link|meta|base)\b[\s\S]*?<\/\1\s*>\s*/gi;
+const DANGEROUS_ELEMENTS_OPEN = /<(script|style|iframe|object|embed|form|link|meta|base)\b[^>]*\/?>/gi;
+const EVENT_ATTRIBUTES = /\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
+const URL_ATTRIBUTES = /(\s+(?:xlink:)?(?:href|src)\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
+
+/**
+ * Defense-in-depth pass over the rendered chapter HTML. Repo-derived text is
+ * already escaped at its source (see render/escape.ts), but LLM chapters quote
+ * that content back and can emit markup of their own — so the final HTML must
+ * not trust it: dangerous elements are dropped, event handlers are stripped,
+ * and script-bearing URLs are neutralized.
+ */
+function sanitizeBookHtml(html: string): string {
+  return html
+    .replace(DANGEROUS_ELEMENTS, '')
+    .replace(DANGEROUS_ELEMENTS_OPEN, '')
+    .replace(EVENT_ATTRIBUTES, '')
+    .replace(URL_ATTRIBUTES, (match, prefix: string, raw: string) => {
+      const quoted = raw.length >= 2 && (raw.startsWith('"') || raw.startsWith("'"));
+      const value = quoted ? raw.slice(1, -1) : raw;
+      const decoded = decodeHtmlEntities(value).trim();
+      return UNSAFE_SCHEME.test(decoded) ? `${prefix}"#"` : match;
+    });
+}
+
 /** Single-file, print-ready HTML twin of the markdown book (browser print → PDF). */
 export function renderBookHtml(book: HandoverBook, markdown: string): string {
   let body = marked.parse(markdown, { async: false }) as string;
+  body = sanitizeBookHtml(body);
   body = body.replace(/<a href="(https?:\/\/[^"]*)"/g, '<a target="_blank" rel="noopener noreferrer" href="$1"');
   return [
     '<!doctype html>',

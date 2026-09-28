@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { HandoverStore } from '../src/store/sqlite.js';
-import type { CommitRecord, IssueRecord, ReviewRecord } from '../src/types.js';
+import type { CommitRecord, IssueRecord, PullRequestRecord, ReviewRecord } from '../src/types.js';
 
 const REPO = 'acme/api';
 
@@ -14,6 +14,52 @@ function commit(sha: string, author: string, at: string, paths: string[], messag
     additions: 10,
     deletions: 2,
     files: paths.map((path) => ({ path, additions: 5, deletions: 1 })),
+  };
+}
+
+function pr(number: number): PullRequestRecord {
+  return {
+    repo: REPO,
+    number,
+    title: `PR ${number}`,
+    authorLogin: 'alice',
+    state: 'closed',
+    createdAt: '2026-09-01T00:00:00Z',
+    updatedAt: '2026-09-02T00:00:00Z',
+    headSha: 'a'.repeat(40),
+    mergedAt: null,
+    body: '',
+    additions: 1,
+    deletions: 1,
+    changedFiles: 1,
+  };
+}
+
+function mirroredIssue(number: number): IssueRecord {
+  return {
+    repo: REPO,
+    number,
+    title: `PR ${number}`,
+    authorLogin: 'alice',
+    state: 'closed',
+    createdAt: '2026-09-01T00:00:00Z',
+    closedAt: null,
+    labels: [],
+    comments: [],
+    isPullRequest: true,
+  };
+}
+
+function review(id: number, prNumber = 1): ReviewRecord {
+  return {
+    id,
+    repo: REPO,
+    prNumber,
+    reviewerLogin: 'bob',
+    state: 'COMMENTED',
+    submittedAt: '2026-09-01T04:00:00Z',
+    body: 'note',
+    comments: [{ id: id * 10, reviewId: id, path: 'payments/a.ts', body: 'inline', authorLogin: 'bob' }],
   };
 }
 
@@ -163,5 +209,82 @@ describe('HandoverStore', () => {
     });
     store.deleteReviewsNotSeen(REPO, 1, []);
     expect(store.allReviews()).toHaveLength(0);
+  });
+});
+
+describe('upsertPullRequestBundle', () => {
+  it('writes the PR row only together with its files, reviews and mirrored issue', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertPullRequestBundle({ pr: pr(1), paths: ['payments/a.ts'], reviews: [review(7)], seenReviewIds: [7], issue: mirroredIssue(1) });
+    expect(store.allPullRequests()).toHaveLength(1);
+    expect(store.allPrFiles().get(`${REPO}#1`)).toEqual(['payments/a.ts']);
+    expect(store.allReviews()).toHaveLength(1);
+    expect(store.allIssues().find((issue) => issue.number === 1)?.isPullRequest).toBe(true);
+  });
+
+  it('rolls the whole bundle back when a child write fails', () => {
+    const store = HandoverStore.inMemory();
+    expect(() =>
+      store.upsertPullRequestBundle({
+        pr: pr(1),
+        paths: [null as unknown as string], // NOT NULL violation mid-transaction
+        reviews: [review(7)],
+        seenReviewIds: [7],
+        issue: mirroredIssue(1),
+      }),
+    ).toThrow();
+    // the PR row must never exist without its children — the incremental skip
+    // would otherwise treat the half-indexed PR as complete forever
+    expect(store.allPullRequests()).toHaveLength(0);
+    expect(store.allReviews()).toHaveLength(0);
+    expect(store.allIssues()).toHaveLength(0);
+    expect(store.allPrFiles().size).toBe(0);
+  });
+
+  it('removes reviews that were not in the seen set', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertReview(review(7));
+    store.upsertPullRequestBundle({ pr: pr(1), paths: [], reviews: [review(8)], seenReviewIds: [8], issue: mirroredIssue(1) });
+    expect(store.allReviews().map((entry) => entry.id)).toEqual([8]);
+  });
+});
+
+describe('ghost-data pruning', () => {
+  it('removes commits absent from a complete listing and refuses an empty one', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertCommit(commit('a'.repeat(40), 'alice', '2026-09-01T00:00:00Z', ['src/a.ts']));
+    store.upsertCommit(commit('b'.repeat(40), 'alice', '2026-09-02T00:00:00Z', ['src/b.ts']));
+    store.pruneCommitsNotSeen(REPO, ['b'.repeat(40)]);
+    expect(store.allCommits().map((entry) => entry.sha)).toEqual(['b'.repeat(40)]);
+    // an empty listing means "we saw nothing" — never "everything is gone"
+    store.pruneCommitsNotSeen(REPO, []);
+    expect(store.allCommits()).toHaveLength(1);
+  });
+
+  it('removes deleted PRs with their files, reviews and mirrored issue rows', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertPullRequestBundle({ pr: pr(1), paths: ['a.ts'], reviews: [review(7, 1)], seenReviewIds: [7], issue: mirroredIssue(1) });
+    store.upsertPullRequestBundle({ pr: pr(2), paths: ['b.ts'], reviews: [], seenReviewIds: [], issue: mirroredIssue(2) });
+    store.prunePullRequestsNotSeen(REPO, [2]);
+    expect(store.allPullRequests().map((entry) => entry.number)).toEqual([2]);
+    expect(store.allPrFiles().get(`${REPO}#1`)).toBeUndefined();
+    expect(store.allReviews()).toHaveLength(0);
+    expect(store.allIssues().map((issue) => issue.number)).toEqual([2]);
+  });
+
+  it('removes deleted issues and keeps mirrored PR rows', () => {
+    const store = HandoverStore.inMemory();
+    const issue = (number: number): IssueRecord => ({
+      repo: REPO, number, title: `issue ${number}`, authorLogin: 'bob', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', closedAt: null,
+      labels: ['bug'], comments: [{ id: number, number, authorLogin: 'bob', createdAt: '2026-09-01T00:00:00Z', body: 'text' }],
+      isPullRequest: false,
+    });
+    store.upsertIssue(issue(10));
+    store.upsertIssue(issue(11));
+    store.upsertIssue(mirroredIssue(12));
+    store.pruneIssuesNotSeen(REPO, [10]);
+    expect(store.allIssues().map((entry) => entry.number)).toEqual([10, 12]);
+    expect(store.allIssues().find((entry) => entry.number === 10)?.comments).toHaveLength(1);
   });
 });

@@ -33,7 +33,9 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/a742987/Handover.git "$RUNNER_TEMP/handover"
           cd "$RUNNER_TEMP/handover"
-          npm ci --omit=dev && npm run build
+          # devDependencies are required: typescript provides the tsc binary
+          # that `npm run build` (and therefore dist/cli.js) needs
+          npm ci && npm run build
       - name: Build or refresh the index (cached between runs)
         run: |
           node "$RUNNER_TEMP/handover/dist/cli.js" collect "$HANDOVER_USER" \

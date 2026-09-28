@@ -153,3 +153,13 @@ describe('computeRisk', () => {
     expect(payments?.factors.changeFrequency).toBe(1); // one commit, not two files' worth
   });
 });
+
+describe('unattributed commits', () => {
+  it('never counts the "unknown" sentinel as the subject — even for a user named unknown', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertCommit(commit('a'.repeat(40), 'unknown', isoDaysAgo(10), 'payments/charge.ts'));
+    // with the sentinel folding into isUser, the ratio would exceed 1 and the
+    // module would rank as sole-owned by nobody
+    expect(computeRisk(store, 'unknown', { now: NOW })).toHaveLength(0);
+  });
+});

@@ -83,10 +83,10 @@ function createOpenAiProvider(config: HandoverConfig): LlmProvider {
       )) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };
       const choice = data.choices?.[0];
       const content = choice?.message?.content ?? '';
-      // finish_reason === 'length' means the response hit the token cap — fail the
+      // finish_reason === 'length' means the response hit the provider's cap — fail the
       // chapter so the caller falls back to deterministic synthesis with a clean reason.
       if (choice?.finish_reason === 'length') {
-        throw new Error('OpenAI response was truncated (finish_reason=length) — increase max_tokens or shorten input');
+        throw new Error('OpenAI response was truncated (finish_reason=length) — shorten the input (the request sets no max_tokens, so only the provider default applies)');
       }
       return content;
     },
@@ -147,7 +147,7 @@ function createOllamaProvider(config: HandoverConfig): LlmProvider {
       const content = data.message?.content ?? '';
       // done_reason === 'length' means the response was truncated
       if (data.done_reason === 'length') {
-        throw new Error('Ollama response was truncated (done_reason=length) — increase num_predict or shorten input');
+        throw new Error('Ollama response was truncated (done_reason=length) — shorten the input (the request sets no num_predict, so only the model default applies)');
       }
       return content;
     },

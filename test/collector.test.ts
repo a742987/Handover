@@ -328,4 +328,113 @@ describe('GitHubCollector', () => {
     expect(store.allIssues().map((issue) => issue.number)).toEqual([50, 5]);
     store.close();
   });
+
+  it('spares preserved repos (local git rows) from the orphan cleanup', async () => {
+    const store = HandoverStore.inMemory();
+    store.upsertCommit({
+      sha: 'b'.repeat(40),
+      repo: 'local-api',
+      authorLogin: USERNAME,
+      authoredAt: '2026-09-01T00:00:00Z',
+      message: 'local work',
+      additions: 1,
+      deletions: 0,
+      files: [{ path: 'src/x.ts', additions: 1, deletions: 0 }],
+    });
+    const calls = { getCommit: 0 };
+    const collector = new GitHubCollector('test-token', fakeOctokit({ commits: [{ sha: 'a'.repeat(40), author: { login: USERNAME }, commit: { author: { date: '2026-09-01T00:00:00Z' }, message: 'remote work' } }] }, calls) as unknown as Octokit);
+    await collector.collectInto(store, USERNAME, [FULL_NAME], { preserveRepos: ['local-api'] });
+    expect(store.allCommits().some((commit) => commit.repo === 'local-api')).toBe(true);
+    expect(store.allCommits().some((commit) => commit.repo === FULL_NAME)).toBe(true);
+  });
+
+  it('still clears orphans outside the scope when nothing is preserved', async () => {
+    const store = HandoverStore.inMemory();
+    store.upsertCommit({
+      sha: 'c'.repeat(40),
+      repo: 'stale/repo',
+      authorLogin: USERNAME,
+      authoredAt: '2026-09-01T00:00:00Z',
+      message: 'stale',
+      additions: 1,
+      deletions: 0,
+      files: [{ path: 'src/x.ts', additions: 1, deletions: 0 }],
+    });
+    await collectInto(store, { commits: [] });
+    expect(store.allCommits()).toHaveLength(0);
+  });
+
+  it('prunes commits that no longer exist upstream when the listing is complete', async () => {
+    const shaA = 'a'.repeat(40);
+    const shaB = 'b'.repeat(40);
+    const listing = (shas: string[]): FakeData => ({
+      commits: shas.map((sha, index) => ({
+        sha,
+        author: { login: USERNAME },
+        commit: { author: { date: `2026-09-0${index + 1}T00:00:00Z` }, message: `work ${index}` },
+      })),
+    });
+    const { store } = await collect(listing([shaA, shaB]));
+    expect(store.allCommits()).toHaveLength(2);
+    const second = await collectInto(store, listing([shaA]));
+    expect(second.result.skippedCommits).toBe(1);
+    expect(store.allCommits().map((commit) => commit.sha)).toEqual([shaA]);
+  });
+
+  it('never prunes from a --since-bounded (partial) listing', async () => {
+    const shaA = 'a'.repeat(40);
+    const shaB = 'b'.repeat(40);
+    const listing = (shas: string[]): FakeData => ({
+      commits: shas.map((sha, index) => ({
+        sha,
+        author: { login: USERNAME },
+        commit: { author: { date: `2026-09-0${index + 1}T00:00:00Z` }, message: `work ${index}` },
+      })),
+    });
+    const { store } = await collect(listing([shaA, shaB]));
+    await collectInto(store, listing([shaA]), { since: '2030-01-01T00:00:00Z' });
+    // the window only saw part of the history — older commits must survive
+    expect(store.allCommits()).toHaveLength(2);
+  });
+
+  it('prunes PRs deleted upstream together with their children', async () => {
+    const pr = (number: number, created: string): PullRequestListItem => ({
+      number,
+      title: `PR ${number}`,
+      user: { login: USERNAME },
+      state: 'closed',
+      created_at: created,
+      updated_at: created,
+      merged_at: null,
+      body: '',
+      additions: 1,
+      deletions: 1,
+      changed_files: 1,
+    });
+    const data: FakeData = {
+      commits: [],
+      pullRequests: [pr(1, '2026-09-01T00:00:00Z'), pr(2, '2026-09-02T00:00:00Z')],
+      reviews: [{ id: 55, user: { login: 'bob' }, state: 'COMMENTED', submitted_at: '2026-09-01T04:00:00Z', body: 'note' }],
+      prFiles: { 1: [{ filename: 'payments/charge.ts' }], 2: [{ filename: 'ops/x.ts' }] },
+      comments: {},
+    };
+    const { store } = await collect(data);
+    expect(store.allPullRequests()).toHaveLength(2);
+
+    const second = await collectInto(store, {
+      commits: [],
+      pullRequests: [pr(2, '2026-09-02T00:00:00Z')],
+      reviews: [],
+      prFiles: { 2: [{ filename: 'ops/x.ts' }] },
+      comments: {},
+    });
+    expect(store.allPullRequests().map((entry) => entry.number)).toEqual([2]);
+    expect(store.allPrFiles().get(`${FULL_NAME}#1`)).toBeUndefined();
+    // the fake serves the same review list for every PR, so review 55 is
+    // re-parented to PR 2 — what matters is that nothing references PR 1
+    expect(store.allReviews().every((entry) => entry.prNumber !== 1)).toBe(true);
+    const mirrored = store.allIssues().find((issue) => issue.number === 1);
+    expect(mirrored).toBeUndefined();
+    store.close();
+  });
 });

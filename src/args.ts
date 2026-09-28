@@ -15,14 +15,19 @@ export function parseRepos(value: string, previous: string[]): string[] {
 /**
  * Accepts ISO date or ISO date-time (e.g. 2024-01-01, 2024-01-01T10:00:00Z).
  * Rejects ambiguous formats like "Jan 1, 2024" or "1/1/2024" that new Date()
- * would otherwise parse silently.
+ * would otherwise parse silently. Zoneless date-times are normalized to UTC —
+ * new Date() parses them as local time, while date-only forms are UTC per the
+ * ES spec, so "2024-01-01" and "2024-01-01T00:00" would otherwise disagree by
+ * the machine's UTC offset.
  */
 export function parseSince(value: string): string {
-  const isoRe = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
-  if (!isoRe.test(value)) {
+  const isoRe = /^(\d{4}-\d{2}-\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  const match = isoRe.exec(value);
+  if (!match) {
     throw new InvalidArgumentError('--since expects an ISO date, e.g. 2024-01-01 or 2024-01-01T10:00:00Z');
   }
-  const date = new Date(value);
+  const zoneless = match[2] !== undefined && !/(Z|[+-]\d{2}:?\d{2})$/.test(value);
+  const date = new Date(zoneless ? `${value}Z` : value);
   if (Number.isNaN(date.getTime())) {
     throw new InvalidArgumentError('--since expects an ISO date, e.g. 2024-01-01');
   }

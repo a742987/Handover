@@ -20,6 +20,23 @@ describe('redact', () => {
     expect(redact('DB_PASSWORD="hunter2longer"')).not.toContain('hunter2');
   });
 
+  it('scrubs JSON-quoted keys and single-quoted values', () => {
+    expect(redact('"api_key": "supersecret123"')).not.toContain('supersecret123');
+    expect(redact('{"secret":"hunter2longer"}')).not.toContain('hunter2');
+    expect(redact("db_password: 'supersecret123'")).not.toContain('supersecret123');
+    expect(redact('token="supersecret123"')).not.toContain('supersecret123');
+  });
+
+  it('scrubs LLM-provider and Google key formats', () => {
+    expect(redact('sk-ant-api03-aaaaaaaaaaaaaaaaaaaa')).not.toContain('sk-ant');
+    expect(redact('key sk-proj-aaaaaaaaaaaaaaaaaaaa')).not.toContain('sk-proj');
+    expect(redact('AIzaSyA-1234567890abcdefghijklmnopqrstuv')).not.toContain('AIza');
+  });
+
+  it('scrubs bearer tokens including trailing padding', () => {
+    expect(redact('Bearer abcdefghijklmnopqrstuvwx==')).toBe(REDACTED);
+  });
+
   it('scrubs private key blocks', () => {
     const pem = '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEA\nAAAAAAAAAAAA\n-----END OPENSSH PRIVATE KEY-----';
     expect(redact(pem)).not.toContain('b3Blbn');

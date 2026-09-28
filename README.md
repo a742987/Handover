@@ -56,10 +56,10 @@ Output lands in `handover-data/`:
 | `capture <username>` | sit down with the departing engineer and record their own answers; they are bound into chapter 6 (`--answers q.json` for agents and scripts) |
 | `risk <username> [--json]` | print the Risk Top 5 from the local index |
 | `bus-factor <username>` | team view: which modules only one person commits to, merged with CODEOWNERS when the repo has one |
-| `gate <username> --files changed.txt` | CI check: does this change set touch sole-owned modules? (`--comment`, `--fail-on-match`; see [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
+| `gate <username> --files changed.txt` | CI check: does this change set touch sole-owned modules? (`--comment`, `--fail-on-match`, `--repo owner/name` to scope a multi-repo index; see [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
 | `render <username>` | re-render the book from the index without GitHub access (chapters 4-6 call the LLM provider only if an API key is set; pass `-r` to override the repositories recorded in the index) |
 
-Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed), `--html` (also write a print-ready single-file HTML twin — browser print gives you the PDF), `--redact` (scrub known secret formats from the LLM digest and the book; also `HANDOVER_REDACT=1`).
+Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>` (zoneless times are treated as UTC), `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed), `--html` (also write a print-ready single-file HTML twin — browser print gives you the PDF), `--redact` (scrub known secret formats from the LLM digest and the book; also `HANDOVER_REDACT=1`). `gen` and `collect` accept `--author <identity>` to match the departing engineer's name/email in local clones; `capture --list` prints captured answers; `bus-factor` takes `--top <n>`, `--window <days>` and `--json` for CI.
 
 ### LLM providers
 
@@ -144,7 +144,7 @@ npm run build       # dist/
 npm run dev -- ...  # run the CLI from source
 ```
 
-Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM providers. CI runs typecheck + tests + build on every push.
+Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM providers. CI runs typecheck + tests + build on pushes to main and on every pull request.
 
 ## Roadmap
 
