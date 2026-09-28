@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Handover Book — dana-dev</title>
+<style>
+  :root { color-scheme: light; }
+  body { margin: 0; background: #f5f3ee; color: #1f2328; font: 16px/1.65 Georgia, 'Times New Roman', serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 3rem 2rem 6rem; background: #fff; box-shadow: 0 0 24px rgba(0,0,0,.08); }
+  h1, h2, h3, h4 { font-family: Helvetica, Arial, sans-serif; line-height: 1.25; }
+  h1 { border-bottom: 3px double #999; padding-bottom: .4rem; }
+  h2 { margin-top: 2.5rem; border-bottom: 1px solid #ddd; padding-bottom: .3rem; }
+  a { color: #0b5cad; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font: 85% ui-monospace, 'Cascadia Code', Consolas, monospace; background: #f0eee8; padding: .1em .3em; border-radius: 3px; }
+  table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-size: 92%; font-family: Helvetica, Arial, sans-serif; }
+  th, td { border: 1px solid #d8d4ca; padding: .45rem .6rem; text-align: left; vertical-align: top; }
+  th { background: #efece4; }
+  blockquote { margin: 1rem 0; padding: .2rem 1rem; border-left: 4px solid #c9b98a; background: #faf8f2; color: #444; }
+  hr { border: none; border-top: 1px solid #ddd; margin: 2rem 0; }
+  @media print { body { background: #fff; } main { box-shadow: none; max-width: none; padding: 0; } a { color: inherit; } }
+</style>
+</head>
+<body>
+<main><h1>Handover Book — @dana-dev</h1>
+<p><em>When a developer leaves, their knowledge shouldn&#39;t.</em></p>
+<ul>
+<li><strong>Repositories:</strong> demo-shop</li>
+<li><strong>Generated:</strong> 2026-09-28T12:39:48.409Z</li>
+<li><strong>Chapters:</strong> 6</li>
+<li><strong>Synthesis:</strong> deterministic (no LLM key configured)</li>
+</ul>
+<blockquote>
+<p>This book is <strong>a gift for the successor</strong>, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; nothing was uploaded anywhere. Claims without an evidence ref are labelled <em>(inference)</em>.</p>
+</blockquote>
+<h2>Action summary — read this first</h2>
+<p>Where the data comes from, what it misses, and the few things worth confirming before the handover. The chapters below hold the detail.</p>
+<h3>What this analysis covers</h3>
+<ul>
+<li><strong>Repositories:</strong> demo-shop</li>
+<li><strong>Sources:</strong> local git clones (commits only) + synthetic PR/review/issue fixtures (demo data — in real use: GitHub API)</li>
+<li><strong>Commit window:</strong> 2026-03-01 → 2026-08-24 (author dates)</li>
+<li><strong>Collected:</strong> 25 commits · 4 PRs · 4 reviews · 3 issues · 0 comments · 3 captured answer(s)</li>
+<li><strong>Contributors:</strong> 3 distinct attributed author(s)</li>
+<li><strong>Synthesis:</strong> deterministic (no LLM output in this book)</li>
+</ul>
+<h3>Confirm before the handover (top 3)</h3>
+<p><strong>1. <code>demo-shop:payments</code></strong></p>
+<ul>
+<li><strong>Finding:</strong> @dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviews of its PRs; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).</li>
+<li><strong>Confirm with @dana-dev (the departing engineer):</strong> Who can review changes to <code>demo-shop:payments</code> after @dana-dev leaves, and is that person confident doing it today?</li>
+<li><strong>Evidence:</strong> <code>3c994a1</code> <code>320d6cd</code> <code>ee9b679</code> <code>#17 review:105</code> <code>#9</code></li>
+<li><strong>Next step:</strong> Have the successor read and run <code>demo-shop:payments</code>, then walk this item with @dana-dev and record the answer with <code>handover capture</code>.</li>
+<li><strong>Limitation:</strong> Commit and review counts show authorship, not knowledge: pair programming, verbal decisions and off-repo work are invisible to Git. Treat this as a signal to verify, not a verdict.</li>
+</ul>
+<p><strong>2. <code>demo-shop:infra</code></strong></p>
+<ul>
+<li><strong>Finding:</strong> @dana-dev authored 4/4 commits (100%) touching demo-shop:infra; 1 of those commits reference bug-labelled issues (#31); recent activity score 0.33 (last 90 days).</li>
+<li><strong>Confirm with @dana-dev (the departing engineer):</strong> Has anyone besides @dana-dev shipped, deployed or rolled back <code>demo-shop:infra</code> — and if not, what was never written down?</li>
+<li><strong>Evidence:</strong> <code>82bc28f</code> <code>559cef2</code> <code>84a5fe3</code> <code>#31</code></li>
+<li><strong>Next step:</strong> Have the successor read and run <code>demo-shop:infra</code>, then walk this item with @dana-dev and record the answer with <code>handover capture</code>.</li>
+<li><strong>Limitation:</strong> Commit and review counts show authorship, not knowledge: pair programming, verbal decisions and off-repo work are invisible to Git. Treat this as a signal to verify, not a verdict.</li>
+</ul>
+<p><strong>3. <code>demo-shop:auth</code></strong></p>
+<ul>
+<li><strong>Finding:</strong> @dana-dev authored 2/6 commits (33%) touching demo-shop:auth; recent activity score 0.67 (last 90 days).</li>
+<li><strong>Confirm with @dana-dev (the departing engineer):</strong> Who else understands <code>demo-shop:auth</code> well enough to own it, and what would they need to learn first?</li>
+<li><strong>Evidence:</strong> <code>0c62dbb</code> <code>baf88e0</code></li>
+<li><strong>Next step:</strong> Have the successor read and run <code>demo-shop:auth</code>, then walk this item with @dana-dev and record the answer with <code>handover capture</code>.</li>
+<li><strong>Limitation:</strong> Commit and review counts show authorship, not knowledge: pair programming, verbal decisions and off-repo work are invisible to Git. Treat this as a signal to verify, not a verdict.</li>
+</ul>
+<h3>How to read the labels</h3>
+<ul>
+<li><strong>Cited ref</strong> (<code>a1b2c3d</code>, <code>#123</code>, <code>review:456</code>) — a fact from the collected history; the appendix lists them all.</li>
+<li><em><strong>(inference)</strong></em> — a judgement the model or the scoring made that no cited ref directly supports.</li>
+<li><strong>Recorded answers</strong> — first-person answers from the departing engineer, captured with <code>handover capture</code>; the only truly first-person content in this book.</li>
+<li>Risk scores are ownership/maintenance signals from Git records — not a measure of a person&#39;s knowledge, value, or an incident prediction.</li>
+</ul>
+<h2>Contents</h2>
+<ol>
+<li>Code Panorama <em>(deterministic)</em></li>
+<li>Implicit Knowledge Inventory <em>(deterministic)</em></li>
+<li>Risk Top 5 <em>(deterministic)</em></li>
+<li>Decision Archaeology <em>(deterministic)</em></li>
+<li>The 30-Day Path <em>(deterministic)</em></li>
+<li>Questions &amp; Draft Answers <em>(deterministic)</em></li>
+</ol>
+<h2>1. Code Panorama</h2>
+<p>@dana-dev touched 5 modules across 1 repository.</p>
+<h3>demo-shop</h3>
+<table>
+<thead>
+<tr>
+<th>Module</th>
+<th>Commits</th>
+<th>@dana-dev share</th>
+<th>Last touched</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>payments</code></td>
+<td>13</td>
+<td>85%</td>
+<td>2026-08-17</td>
+</tr>
+<tr>
+<td><code>infra</code></td>
+<td>4</td>
+<td>100%</td>
+<td>2026-08-24</td>
+</tr>
+<tr>
+<td><code>auth</code></td>
+<td>6</td>
+<td>33%</td>
+<td>2026-08-10</td>
+</tr>
+<tr>
+<td><code>\(root\)</code></td>
+<td>1</td>
+<td>100%</td>
+<td>2026-03-01</td>
+</tr>
+<tr>
+<td><code>docs</code></td>
+<td>1</td>
+<td>0%</td>
+<td>2026-05-02</td>
+</tr>
+</tbody></table>
+<p>Their centre of gravity: <code>payments</code> in demo-shop, <code>infra</code> in demo-shop, <code>auth</code> in demo-shop, <code>\(root\)</code> in demo-shop, <code>docs</code> in demo-shop.</p>
+<h2>2. Implicit Knowledge Inventory</h2>
+<p>Modules where the knowledge is concentrated in one person — the successor has no fallback author or reviewer there.</p>
+<h3>Sole or dominant author</h3>
+<ul>
+<li><code>demo\-shop:infra</code> — 100% of commits by @dana-dev</li>
+<li><code>demo\-shop:\(root\)</code> — 100% of commits by @dana-dev</li>
+</ul>
+<h3>Sole reviewer</h3>
+<ul>
+<li><code>demo\-shop:payments</code> — every review on this module&#39;s PRs was by @dana-dev [#17 review:105]</li>
+</ul>
+<h2>3. Risk Top 5</h2>
+<p>Scored as <code>sole_contribution_ratio × change_frequency × incident_weight × irreplaceability</code>. Every item lists its evidence chain.</p>
+<h3>1. <code>demo-shop:payments</code> — score 1.464</h3>
+<ul>
+<li>sole contribution: 85%</li>
+<li>change frequency: 1.00</li>
+<li>incident weight: 1.15</li>
+<li>irreplaceability: ×1.50</li>
+</ul>
+<p>@dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviews of its PRs; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).</p>
+<p>Evidence: [3c994a1] [320d6cd] [ee9b679] [#17 review:105] [#9]</p>
+<h3>2. <code>demo-shop:infra</code> — score 0.521</h3>
+<ul>
+<li>sole contribution: 100%</li>
+<li>change frequency: 0.33</li>
+<li>incident weight: 1.25</li>
+<li>irreplaceability: ×1.25</li>
+</ul>
+<p>@dana-dev authored 4/4 commits (100%) touching demo-shop:infra; 1 of those commits reference bug-labelled issues (#31); recent activity score 0.33 (last 90 days).</p>
+<p>Evidence: [82bc28f] [559cef2] [84a5fe3] [#31]</p>
+<h3>3. <code>demo-shop:auth</code> — score 0.222</h3>
+<ul>
+<li>sole contribution: 33%</li>
+<li>change frequency: 0.67</li>
+<li>incident weight: 1.00</li>
+<li>irreplaceability: ×1.00</li>
+</ul>
+<p>@dana-dev authored 2/6 commits (33%) touching demo-shop:auth; recent activity score 0.67 (last 90 days).</p>
+<p>Evidence: [0c62dbb] [baf88e0]</p>
+<h3>4. <code>demo-shop:(root)</code> — score 0.000</h3>
+<ul>
+<li>sole contribution: 100%</li>
+<li>change frequency: 0.00</li>
+<li>incident weight: 1.00</li>
+<li>irreplaceability: ×1.00</li>
+</ul>
+<p>@dana-dev authored 1/1 commits (100%) touching demo-shop:(root); recent activity score 0.00 (last 90 days).</p>
+<p>Evidence: [5cac95e]</p>
+<h2>4. Decision Archaeology</h2>
+<p>LLM synthesis was not available for this run, so this chapter lists the PRs with the richest written rationale instead of a narrative.</p>
+<ul>
+<li>[#12] <strong>Extract retry policy into payments/retry.ts</strong> (demo-shop) — The provider drops connections after 30s, so a fixed 250ms/1s/4s backoff covers the three realistic failure modes. We discussed exponential backoff, but the provider throttles bursts, so exponential fire-hoses them. Keep the table literal and hand-tuned.</li>
+<li>[#17] <strong>Idempotency keys for /charge and partial refunds</strong> (demo-shop) — Fixes the double-fire from #9. Every charge carries a client-supplied idempotency key; partial refunds derive theirs from (charge key, refund id). Do not &quot;simplify&quot; this to server-generated keys — a retried request must hit the same key.</li>
+<li>[#23] <strong>Deploy script: canary step + 30s health check</strong> (demo-shop) — Canary rides the same script; the 30s health-check timeout matches the load balancer, anything shorter flaps in the EU region (#31).</li>
+</ul>
+<h2>5. The 30-Day Path</h2>
+<p>A starting plan built from the risk ranking (LLM synthesis was unavailable).</p>
+<ul>
+<li><p>Week 1: read and run <code>demo-shop:payments</code>; reconcile the evidence in [3c994a1] [320d6cd] [ee9b679] [#17 review:105] [#9].</p>
+</li>
+<li><p>Week 2: read and run <code>demo-shop:infra</code>; reconcile the evidence in [82bc28f] [559cef2] [84a5fe3] [#31].</p>
+</li>
+<li><p>Week 3: read and run <code>demo-shop:auth</code>; reconcile the evidence in [0c62dbb] [baf88e0].</p>
+</li>
+<li><p>Week 4: read and run <code>demo-shop:(root)</code>; reconcile the evidence in [5cac95e].</p>
+</li>
+<li><p>Before the last day: walk each Risk Top 5 item with the departing engineer and record answers in this book.</p>
+</li>
+</ul>
+<h2>6. Questions &amp; Draft Answers</h2>
+<p>LLM style-transfer was unavailable; these are the questions the successor should ask @dana-dev before the last day.</p>
+<ol>
+<li>Which module would you fix first if you had one more week, and why?<ul>
+<li>(answer to be captured)</li>
+</ul>
+</li>
+<li>Which piece of the system looks wrong but must not be &quot;fixed&quot; — and what broke the last time someone tried?<ul>
+<li>(answer to be captured)</li>
+</ul>
+</li>
+<li>Which deploy/migration quirk is load-bearing?<ul>
+<li>(answer to be captured)</li>
+</ul>
+</li>
+<li>Who outside the team do you call when X breaks?<ul>
+<li>(answer to be captured)</li>
+</ul>
+</li>
+<li>What did you promise product/ops that was never written down?<ul>
+<li>(answer to be captured)</li>
+</ul>
+</li>
+</ol>
+<h3>Recorded answers from @dana-dev</h3>
+<p>Captured in the departing engineer’s own words with <code>handover capture</code> — the only first-person material in this book.</p>
+<ol>
+<li><strong>Which module would you fix first if you had one more week, and why?</strong></li>
+</ol>
+<blockquote>
+<p>payments/webhooks.ts. The replay guard works but the capture window is keyed off an in-memory map — one pod restart and we re-process webhooks. I would make it durable before touching anything else.</p>
+</blockquote>
+<p>   — captured 2026-09-28
+2. <strong>Which piece of the system looks wrong but must not be &quot;fixed&quot; — and what broke the last time someone tried?</strong></p>
+<blockquote>
+<p>The double-submit in checkout looks like a bug; it is how we dedupe against the provider. Removing it caused issue #9 (double charges on retry). The idempotency keys in PR #17 are the fix — do not remove them.</p>
+</blockquote>
+<p>   — captured 2026-09-28
+3. <strong>Which deploy/migration quirk is load-bearing?</strong></p>
+<blockquote>
+<p>The canary health-check timeout in infra/deploy.sh must stay at 30s to match the load balancer; anything shorter flaps the EU region (issue #31). And always run the migration dry-run first — the users table has a hand-patched index from the 2024 incident.</p>
+</blockquote>
+<p>   — captured 2026-09-28</p>
+<h2>Appendix — evidence register</h2>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Evidence</th>
+<th>Excerpt</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>commit</td>
+<td><code>82bc28f</code></td>
+<td>fix: canary health check timeout (#31)</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>559cef2</code></td>
+<td>chore: note deploy key rotation in docs</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>84a5fe3</code></td>
+<td>fix: migrate down guard</td>
+</tr>
+<tr>
+<td>issue</td>
+<td><code>#31</code></td>
+<td>bug-labelled issue referenced from this module</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>5cac95e</code></td>
+<td>init: demo shop</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>3c994a1</code></td>
+<td>fix: replay guard for captured webhooks</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>320d6cd</code></td>
+<td>chore: bump provider sdk</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>ee9b679</code></td>
+<td>perf: batch charge inserts</td>
+</tr>
+<tr>
+<td>review</td>
+<td><code>#17 review:105</code></td>
+<td>all 2 reviews on this module&#39;s PRs were by @dana-dev</td>
+</tr>
+<tr>
+<td>issue</td>
+<td><code>#9</code></td>
+<td>bug-labelled issue referenced from this module</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>0c62dbb</code></td>
+<td>fix: clock skew on token validation</td>
+</tr>
+<tr>
+<td>commit</td>
+<td><code>baf88e0</code></td>
+<td>feat: refresh token rotation</td>
+</tr>
+</tbody></table>
+</main>
+</body>
+</html>
