@@ -2,21 +2,22 @@
 
 Generate or work with a Handover Book for: $ARGUMENTS
 
-Handover turns a departing engineer's GitHub history into a bound, evidence-linked offboarding document. Everything runs locally; only GitHub is read.
+Handover turns a departing engineer's GitHub history into a bound, evidence-linked offboarding document. Collection and rendering run locally; when an LLM provider is configured, collected content is sent to it for synthesis.
 
 If an MCP server named `handover` is available in this session, use its tools:
 
 - `handover_generate` — full pipeline (collect → risk → render the book)
 - `handover_collect` — index GitHub history only, without rendering
 - `handover_risk` — Risk Top 5 from an existing index
-- `handover_render` — re-render the book from an existing index (no network)
+- `handover_render` — re-render the book from an existing index (no GitHub network; LLM chapters use the configured provider if an API key is available)
 
 Otherwise use the `handover` CLI (install with `npm install -g handover-book` if missing):
 
 ```bash
 handover gen <username> -r owner/name [--since 2024-01-01]   # full pipeline
+handover collect <username> -r owner/name                    # index only, no book
 handover risk <username>                                     # Risk Top 5 from index
-handover render <username>                                   # re-render, no network
+handover render <username>                                   # re-render, no GitHub network
 ```
 
 Input defaults: arguments are `<username> --repo owner/name`; ask the user for anything missing (never guess repo names). `GITHUB_TOKEN` must be set in the environment for anything that touches GitHub. Indexing is incremental — re-running `gen` for the same person only fetches new activity.

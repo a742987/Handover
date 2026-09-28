@@ -5,7 +5,7 @@
 > **Wenn ein Entwickler geht, sollte sein Wissen nicht mitgehen.**
 > Richte Handover auf den Benutzernamen eines auscheidenden Engineers, und es liest alles, was er je committet, reviewt und vertreten hat — und erzeugt daraus ein gebundenes, mit Belegen verknüpftes **Handover Book** (das Übergabebuch) für die Person, die seine Stelle übernimmt.
 
-Ein Befehl. Vollständig lokal. Nichts über deine Codebasis verlässt jemals deinen Rechner.
+Ein Befehl. Läuft lokal. Wenn ein LLM-Anbieter konfiguriert ist (Standard), werden die gesammelten Repository-Inhalte zur Synthese an ihn gesendet; ohne API-Schlüssel bleibt alles deterministisch und lokal.
 
 ```bash
 handover gen <username> --repo owner/name
@@ -28,10 +28,10 @@ Handover deckt die impliziten Verluste ab, die sonst nichts abdeckt:
 
 ## Schnellstart
 
-Voraussetzungen: **Node ≥ 22.5** (bringt SQLite eingebaut mit — keine native Kompilierung), ein GitHub-Token für vernünftige Rate-Limits.
+Voraussetzungen: **Node ≥ 22.13** (bringt SQLite eingebaut mit — keine native Kompilierung), ein GitHub-Token für vernünftige Rate-Limits.
 
 ```bash
-git clone <this repo> && cd handover
+git clone https://github.com/a742987/Handover.git && cd Handover
 npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
@@ -50,7 +50,7 @@ Die Ausgabe landet in `handover-data/`:
 | `gen <username> -r owner/name` | sammeln → analysieren → das gesamte Buch rendern |
 | `collect <username> -r owner/name` | nur den GitHub-Verlauf indizieren (Commits, PRs, Reviews und Issues, die bereits im Index sind, werden übersprungen) |
 | `risk <username>` | die Top-5-Risiken aus dem lokalen Index ausgeben |
-| `render <username>` | das Buch aus dem Index neu rendern (kein Netzwerk; Repositories werden aus dem Index gelesen, mit `-r` überschreibbar) |
+| `render <username>` | das Buch aus dem Index neu rendern, ohne GitHub-Zugriff (Kapitel 4-6 rufen den LLM-Anbieter nur auf, wenn ein API-Schlüssel gesetzt ist; mit `-r` überschreibst du die im Index gespeicherten Repositories) |
 
 Häufige Flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (bereits Indiziertes erneut abrufen).
 
@@ -98,7 +98,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 **Claude Code** — das gebündelte Plugin installieren:
 
 ```
-/plugin marketplace add <this-repo>
+/plugin marketplace add a742987/Handover
 /plugin install handover@handover
 ```
 
@@ -122,7 +122,7 @@ Das Plugin registriert den `handover`-MCP-Server automatisch (über das Feld `mc
 ## Datenschutz und Ethik — lies das, bevor du es für jemanden ausführst
 
 - **Ein Geschenk, kein Audit.** Handover existiert, um einer Nachfolge die Karte zu übergeben — niemals, um die gehende Person zu benoten. Führe es *mit* dem auscheidenden Engineer aus, nicht an ihm vorbei. Ihre Review-Kommentare und Commit-Messages werden Kolleginnen und Kollegen zitiert — was sie nicht in ein Abschiedsdokument schreiben würden, gehört nicht ins Buch.
-- **Local-first.** Sammeln, Indizieren, Synthese und Rendering laufen allesamt auf deinem Rechner. Die einzigen Netzwerkaufrufe gehen an die GitHub-API und deinen konfigurierten LLM-Anbieter. Wähle **Ollama**, und kein einziges Byte Repository-Inhalt erreicht Dritte.
+- **Local-first.** Sammeln, Indizieren und Rendering laufen allesamt auf deinem Rechner. Die einzigen Netzwerkaufrufe gehen an die GitHub-API und deinen konfigurierten LLM-Anbieter. Wähle **Ollama**, und kein einziges Byte Repository-Inhalt erreicht Dritte.
 - **Der Index ist sensibel.** `handover-data/*.db` enthält die vollständige Commit-Historie deines Teams. Sie ist standardmäßig gitignored; behandle die Datei wie ein Credential.
 - **Halluzination ist ein Bug, keine Eigenart.** LLM-Ausgaben müssen Belegverweise zitieren; unbelegte Aussagen müssen als *(inference)* gekennzeichnet sein. Vertraue keinem Kapitel, das du nicht gegen seine Belegkette gestichelt hast.
 - **Anonymisierung** (echte Namen → Rollencodes, für HR-Kontexte) ist auf der Roadmap, bevor irgendeine Team-/Enterprise-Stufe ausgeliefert wird.

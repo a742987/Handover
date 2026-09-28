@@ -33,7 +33,11 @@ function isRetryable(error: unknown): boolean {
   if (status === 429 || status >= 500) {
     return true;
   }
-  return status === 403 && /rate limit|secondary rate/i.test(message);
+  // GitHub abuse detection ("You have triggered an abuse detection mechanism") often comes with Retry-After
+  if (status === 403 && /rate limit|secondary rate|abuse/i.test(message)) {
+    return true;
+  }
+  return false;
 }
 
 function retryDelayMs(error: unknown, attempt: number): number {
@@ -166,6 +170,9 @@ export class GitHubCollector {
       issues: 0,
       skippedIssues: 0,
     };
+
+    // Clear orphan data from repos not in the current collection scope.
+    store.clearRepositoriesExcept(repos);
 
     for (const fullName of repos) {
       const { owner, repo } = parseRepoSlug(fullName);
@@ -343,6 +350,7 @@ export class GitHubCollector {
       closed_at?: string | null;
       merged_at?: string | null;
       body?: string | null;
+      head?: { sha?: string } | null;
       additions?: number;
       deletions?: number;
       changed_files?: number;
@@ -357,9 +365,11 @@ export class GitHubCollector {
         break;
       }
       const updatedAt = pr.updated_at ?? null;
+      const headSha = pr.head?.sha ?? null;
       // Unlike commits, PRs change over time (merge state, reviews, comments all
-      // bump updated_at) — skip only when the cached row is still current.
-      if (!options.refresh && store.hasPullRequest(name, number, updatedAt ?? undefined)) {
+      // bump updated_at; new commits push head.sha without bumping updated_at) —
+      // skip only when the cached row is still current on both axes.
+      if (!options.refresh && store.hasPullRequest(name, number, updatedAt ?? undefined, headSha ?? undefined)) {
         result.skippedPullRequests += 1;
         continue;
       }
@@ -371,6 +381,7 @@ export class GitHubCollector {
         state: pr.state ?? 'unknown',
         createdAt,
         updatedAt,
+        headSha,
         mergedAt: pr.merged_at ?? null,
         body: pr.body ?? '',
         additions: pr.additions ?? 0,
@@ -417,6 +428,7 @@ export class GitHubCollector {
         }
       }
 
+      const reviewIdsSeen = new Set<number>();
       for await (const { data: reviewPage } of this.octokit.paginate.iterator(this.octokit.rest.pulls.listReviews, {
         owner,
         repo,
@@ -424,6 +436,7 @@ export class GitHubCollector {
         per_page: 100,
       })) {
         for (const review of reviewPage) {
+          reviewIdsSeen.add(review.id);
           const record2: ReviewRecord = {
             id: review.id,
             repo: name,
@@ -438,6 +451,9 @@ export class GitHubCollector {
           result.reviews += 1;
         }
       }
+      // Reviews deleted on GitHub side are removed from the local index so
+      // sole-reviewer ratios and evidence chains stay accurate.
+      store.deleteReviewsNotSeen(name, number, [...reviewIdsSeen]);
 
       // PR conversations live in the issue-comment namespace
       const prComments = await this.octokit.paginate(this.octokit.rest.issues.listComments, {
@@ -497,7 +513,9 @@ export class GitHubCollector {
       }
       const createdAt = issue.created_at ?? new Date().toISOString();
       if (options.since && createdAt < options.since) {
-        // issues are listed newest-first by creation — stop at the first old one
+        // issues are listed newest-first by creation — stop at the first old one.
+        // Note: this means reviews/comments on older PRs/issues (created before --since
+        // but with activity after) are silently skipped; this is a documented limitation.
         break;
       }
       // PR entries appear in the issues listing too; their conversations are

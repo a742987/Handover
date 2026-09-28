@@ -5,7 +5,7 @@
 > **當一位開發者離開時，他的知識不應該跟著離開。**
 > 把離職工程師的帳號名稱交給 Handover，它會讀取他提交過、審核過、為之爭論過的一切 —— 然後為接任者產出一本裝訂成冊、證據可溯的 **Handover Book（交接手冊）**。
 
-一行指令。完全在本機執行。你的程式碼庫的任何資訊都不會離開你的機器。
+一行指令。在本機執行。設定 LLM 提供者時（預設行為），收集到的儲存庫內容會被傳送至該提供者進行合成；未設定 API 金鑰時，所有內容都保持確定性的本機處理。
 
 ```bash
 handover gen <username> --repo owner/name
@@ -28,10 +28,10 @@ Handover 涵蓋其他工具無法涵蓋的隱性損失：
 
 ## 快速開始
 
-環境需求：**Node ≥ 22.5**（內建 SQLite —— 無需原生編譯），以及一個用於合理速率限制的 GitHub token。
+環境需求：**Node ≥ 22.13**（內建 SQLite —— 無需原生編譯），以及一個用於合理速率限制的 GitHub token。
 
 ```bash
-git clone <this repo> && cd handover
+git clone https://github.com/a742987/Handover.git && cd Handover
 npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
@@ -50,7 +50,7 @@ npm run dev -- gen <username> --repo owner/name
 | `gen <username> -r owner/name` | 蒐集 → 分析 → 產出完整手冊 |
 | `collect <username> -r owner/name` | 僅索引 GitHub 歷史（索引中已有的 commit、PR、review 與 issue 會被略過） |
 | `risk <username>` | 從本機索引列印風險 Top 5 |
-| `render <username>` | 從索引重新產出手冊（不連上網路；儲存庫資訊從索引讀取，可用 `-r` 覆寫） |
+| `render <username>` | 從索引重新產出手冊，不連上 GitHub（第 4-6 章僅在設定了 API 金鑰時才呼叫 LLM 提供方；可用 `-r` 覆寫索引中記錄的儲存庫） |
 
 常用參數：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`、`--data-dir <dir>`、`--refresh`（重新抓取已索引的內容）。
 
@@ -98,7 +98,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 **Claude Code** —— 安裝隨附的外掛：
 
 ```
-/plugin marketplace add <this-repo>
+/plugin marketplace add a742987/Handover
 /plugin install handover@handover
 ```
 
@@ -122,7 +122,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 ## 隱私與倫理 —— 在為別人執行之前請先讀這一節
 
 - **這是一份禮物，不是一次稽核。** Handover 的存在是為了把地圖交到接任者手中，絕不是要給離職者打分數。請*與*離職工程師一起執行它，而不是繞開他。他的 review 留言與 commit 訊息會被原話引用給同事 —— 如果他不會在告別文件裡這樣說，那它就不該出現在手冊裡。
-- **本機優先。** 蒐集、索引、生成與產出全部在你的機器上執行。僅有的網路呼叫是發往 GitHub API 以及你設定的 LLM 提供方。選擇 **Ollama**，儲存庫內容將連一個位元組都不會送到任何第三方。
+- **本機優先。** 蒐集、索引與產出全部在你的機器上執行。僅有的網路呼叫是發往 GitHub API 以及你設定的 LLM 提供方。選擇 **Ollama**，儲存庫內容將連一個位元組都不會送到任何第三方。
 - **索引檔案是敏感的。** `handover-data/*.db` 包含你們團隊的完整 commit 歷史。它預設已被 gitignore；請像對待憑證一樣對待這個檔案。
 - **幻覺是 bug，不是小瑕疵。** LLM 輸出必須引用證據引用（evidence refs）；無依據的說法必須標註 *(inference)*。別相信任何你還沒對照證據鏈抽查過的章節。
 - **匿名化**（真實姓名 → 角色代碼，用於 HR 情境）已列入路線圖，將在任何團隊/企業版推出之前完成。

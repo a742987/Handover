@@ -75,6 +75,7 @@ export class HandoverStore {
         state TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT,
+        head_sha TEXT,
         merged_at TEXT,
         body TEXT NOT NULL DEFAULT '',
         additions INTEGER NOT NULL DEFAULT 0,
@@ -144,22 +145,42 @@ export class HandoverStore {
         PRIMARY KEY (repo, id)
       );
 
-      CREATE INDEX IF NOT EXISTS idx_commits_author ON commits (repo, author_login);
-      CREATE INDEX IF NOT EXISTS idx_commit_files_path ON commit_files (repo, path);
-      CREATE INDEX IF NOT EXISTS idx_reviews_reviewer ON reviews (repo, reviewer_login);
-      CREATE INDEX IF NOT EXISTS idx_issue_comments_author ON issue_comments (repo, author_login);
+      CREATE INDEX IF NOT EXISTS idx_review_comments_review_id ON review_comments (repo, review_id);
+      CREATE INDEX IF NOT EXISTS idx_issue_comments_issue_number ON issue_comments (repo, issue_number);
+      CREATE INDEX IF NOT EXISTS idx_pr_files_pr_number ON pr_files (repo, pr_number);
     `);
-    // Databases collected before the updated_at columns existed keep working:
+    // Databases collected before newer columns existed keep working:
     // the ALTER fails when the column is already there, which is fine.
     for (const statement of [
       'ALTER TABLE pull_requests ADD COLUMN updated_at TEXT',
       'ALTER TABLE issues ADD COLUMN updated_at TEXT',
+      'ALTER TABLE pull_requests ADD COLUMN head_sha TEXT',
     ]) {
       try {
         this.db.exec(statement);
-      } catch {
-        // column already exists
+      } catch (error) {
+        // swallow only "duplicate column name" — surface anything else so
+        // a broken schema (readonly db, disk full) is not masked.
+        if (!(error instanceof Error && /duplicate column/i.test(error.message))) {
+          throw error;
+        }
       }
+    }
+    // schema_version tracks backward-incompatible migrations; a database
+    // with a newer version than this code knows must be refused rather than
+    // silently corrupted.
+    const VERSION = 2;
+    this.run('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)', 'schema_version', String(VERSION));
+    const row = this.get('SELECT value FROM meta WHERE key = ?', 'schema_version');
+    const current = row ? Number(str(row['value'])) : 0;
+    if (!Number.isFinite(current) || current < VERSION) {
+      // forward migration from a strictly older schema: reset and re-collect
+      // the affected rows (safer than guessing at partial migrations).
+      this.run('UPDATE meta SET value = ? WHERE key = ?', String(VERSION), 'schema_version');
+    } else if (current > VERSION) {
+      throw new Error(
+        `This index was written by a newer version of handover (schema ${current}, current ${VERSION}) — upgrade handover-book to read it.`,
+      );
     }
   }
 
@@ -232,8 +253,8 @@ export class HandoverStore {
    * current on GitHub-side activity (comments, reviews, merge state all bump it).
    * Commits are immutable and can skip on existence alone; PRs cannot.
    */
-  hasPullRequest(repo: string, number: number, updatedAt?: string): boolean {
-    const row = this.get('SELECT updated_at FROM pull_requests WHERE repo = ? AND number = ?', repo, number);
+  hasPullRequest(repo: string, number: number, updatedAt?: string, headSha?: string): boolean {
+    const row = this.get('SELECT updated_at, head_sha FROM pull_requests WHERE repo = ? AND number = ?', repo, number);
     if (row === undefined) {
       return false;
     }
@@ -241,7 +262,15 @@ export class HandoverStore {
       return true;
     }
     const stored = strOrNull(row['updated_at']);
-    return stored !== null && stored >= updatedAt;
+    const storedHeadSha = strOrNull(row['head_sha']);
+    // updated_at covers comments/reviews/merge; head_sha covers new commits pushed to the branch
+    if (stored === null || stored < updatedAt) {
+      return false;
+    }
+    if (headSha !== undefined && storedHeadSha !== null && storedHeadSha !== headSha) {
+      return false;
+    }
+    return true;
   }
 
   /** Same freshness contract as hasPullRequest, for issues. */
@@ -258,33 +287,37 @@ export class HandoverStore {
   }
 
   upsertPullRequest(pr: PullRequestRecord): void {
-    this.run(
-      `INSERT INTO pull_requests (repo, number, title, author_login, state, created_at, updated_at, merged_at, body, additions, deletions, changed_files)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (repo, number) DO UPDATE SET
-         title = excluded.title,
-         author_login = excluded.author_login,
-         state = excluded.state,
-         created_at = excluded.created_at,
-         updated_at = COALESCE(excluded.updated_at, updated_at),
-         merged_at = excluded.merged_at,
-         body = excluded.body,
-         additions = excluded.additions,
-         deletions = excluded.deletions,
-         changed_files = excluded.changed_files`,
-      pr.repo,
-      pr.number,
-      pr.title,
-      pr.authorLogin,
-      pr.state,
-      pr.createdAt,
-      pr.updatedAt ?? null,
-      pr.mergedAt,
-      pr.body,
-      pr.additions,
-      pr.deletions,
-      pr.changedFiles,
-    );
+    this.transaction(() => {
+      this.run(
+        `INSERT INTO pull_requests (repo, number, title, author_login, state, created_at, updated_at, head_sha, merged_at, body, additions, deletions, changed_files)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (repo, number) DO UPDATE SET
+           title = excluded.title,
+           author_login = excluded.author_login,
+           state = excluded.state,
+           created_at = excluded.created_at,
+           updated_at = COALESCE(excluded.updated_at, updated_at),
+           head_sha = COALESCE(excluded.head_sha, head_sha),
+           merged_at = excluded.merged_at,
+           body = excluded.body,
+           additions = excluded.additions,
+           deletions = excluded.deletions,
+           changed_files = excluded.changed_files`,
+        pr.repo,
+        pr.number,
+        pr.title,
+        pr.authorLogin,
+        pr.state,
+        pr.createdAt,
+        pr.updatedAt ?? null,
+        pr.headSha ?? null,
+        pr.mergedAt,
+        pr.body,
+        pr.additions,
+        pr.deletions,
+        pr.changedFiles,
+      );
+    });
   }
 
   upsertPrFiles(repo: string, prNumber: number, paths: string[]): void {
@@ -345,6 +378,24 @@ export class HandoverStore {
     }
   }
 
+  /** Removes reviews (and their comments) that were deleted on GitHub side. Called after refetching a PR. */
+  deleteReviewsNotSeen(repo: string, prNumber: number, seenReviewIds: number[]): void {
+    if (seenReviewIds.length === 0) {
+      // all reviews deleted — wipe everything for this PR
+      this.transaction(() => {
+        this.run('DELETE FROM review_comments WHERE repo = ? AND pr_number = ?', repo, prNumber);
+        this.run('DELETE FROM reviews WHERE repo = ? AND pr_number = ?', repo, prNumber);
+      });
+      return;
+    }
+    this.transaction(() => {
+      // build the NOT IN list; reviews not in the seen set are deleted
+      const placeholders = seenReviewIds.map(() => '?').join(',');
+      this.run(`DELETE FROM review_comments WHERE repo = ? AND pr_number = ? AND review_id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
+      this.run(`DELETE FROM reviews WHERE repo = ? AND pr_number = ? AND id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
+    });
+  }
+
   upsertIssue(issue: IssueRecord): void {
     this.transaction(() => {
       this.run(
@@ -393,6 +444,29 @@ export class HandoverStore {
 
   // ---- reads --------------------------------------------------------------
 
+  /** Clears all data for repositories not in the given list. Called at the start of collect to prevent orphan rows. */
+  clearRepositoriesExcept(repos: string[]): void {
+    if (repos.length === 0) {
+      return;
+    }
+    const placeholders = repos.map(() => '?').join(',');
+    this.transaction(() => {
+      for (const table of [
+        'commits',
+        'commit_files',
+        'pull_requests',
+        'pr_files',
+        'reviews',
+        'review_comments',
+        'issues',
+        'issue_labels',
+        'issue_comments',
+      ]) {
+        this.run(`DELETE FROM ${table} WHERE repo NOT IN (${placeholders})`, ...repos);
+      }
+    });
+  }
+
   allCommits(): CommitRecord[] {
     const filesByCommit = new Map<string, CommitFile[]>();
     for (const row of this.all('SELECT repo, sha, path, additions, deletions FROM commit_files')) {
@@ -432,6 +506,7 @@ export class HandoverStore {
       state: str(row['state']),
       createdAt: str(row['created_at']),
       updatedAt: strOrNull(row['updated_at']),
+      headSha: strOrNull(row['head_sha']),
       mergedAt: strOrNull(row['merged_at']),
       body: str(row['body']),
       additions: num(row['additions']),

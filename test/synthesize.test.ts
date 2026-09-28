@@ -6,6 +6,9 @@ import type { CommitRecord } from '../src/types.js';
 
 const REPO = 'acme/api';
 const USERNAME = 'alice';
+// Fixed clock after every seeded commit — without it computeRisk's 90-day
+// window slides past the seeds and the assertions silently drift.
+const NOW = new Date('2026-09-10T00:00:00Z');
 
 function commit(sha: string, author: string, at: string, path: string, message = `work ${sha}`): CommitRecord {
   return {
@@ -47,7 +50,7 @@ function seedStore(): HandoverStore {
 describe('buildDigest', () => {
   it('contains module stats, PRs, reviews, comments and the risk ranking', () => {
     const store = seedStore();
-    const risks = computeRisk(store, USERNAME);
+    const risks = computeRisk(store, USERNAME, { now: NOW });
     const digest = buildDigest({ username: USERNAME, repos: [REPO], store, risks });
     expect(digest).toContain(`## Module statistics`);
     expect(digest).toContain(`${REPO}:payments`);
@@ -57,7 +60,7 @@ describe('buildDigest', () => {
 
   it('truncates to the character budget with an explanatory note', () => {
     const store = seedStore();
-    const risks = computeRisk(store, USERNAME);
+    const risks = computeRisk(store, USERNAME, { now: NOW });
     const digest = buildDigest({ username: USERNAME, repos: [REPO], store, risks }, 500);
     expect(digest.length).toBeLessThanOrEqual(500 + 200); // budget plus the truncation note
     expect(digest).toContain('digest truncated at 500 characters');
@@ -67,7 +70,7 @@ describe('buildDigest', () => {
 describe('synthesizeChapters (no provider)', () => {
   it('produces all six chapters in order, deterministic for 1-3 and fallbacks for 4-6', async () => {
     const store = seedStore();
-    const risks = computeRisk(store, USERNAME);
+    const risks = computeRisk(store, USERNAME, { now: NOW });
     const chapters = await synthesizeChapters(
       {
         username: USERNAME,

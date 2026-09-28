@@ -38,11 +38,20 @@ interface ModuleStat {
   lastTouchedAt: string;
 }
 
+/** Escape markdown special characters in untrusted user-generated content. */
+function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_{}[\]()#+\-.!|])/g, '\\$1').replace(/\n/g, ' ');
+}
+
 function computeModuleStats(store: HandoverStore, username: string): ModuleStat[] {
   const stats = new Map<string, ModuleStat>();
   for (const commit of store.allCommits()) {
+    // Per-commit dedup: each file counts once per module, matching risk engine semantics
+    const modulesInCommit = new Set<string>();
     for (const file of commit.files) {
       const module = moduleOf(file.path);
+      if (modulesInCommit.has(module)) continue;
+      modulesInCommit.add(module);
       const key = `${commit.repo}:${module}`;
       let stat = stats.get(key);
       if (!stat) {
@@ -144,7 +153,12 @@ async function llmChapter(
 ): Promise<BookChapter> {
   onProgress?.(`  synthesizing "${CHAPTER_TITLES[id]}" with ${provider.name}/${provider.model} …`);
   const content = await provider.complete(SYSTEM_PROMPT, `${digest}\n\n---\n\nTask: ${instruction}`);
-  return { id, title: CHAPTER_TITLES[id], content: content.trim(), evidence: [], generatedBy: 'llm' };
+  const trimmed = content.trim();
+  // Treat empty or very short responses as failures (likely filtering or model refusal)
+  if (trimmed.length < 50) {
+    throw new Error(`LLM returned insufficient content (${trimmed.length} chars)`);
+  }
+  return { id, title: CHAPTER_TITLES[id], content: trimmed, evidence: [], generatedBy: 'llm' };
 }
 
 function codePanorama(input: SynthesisInput): BookChapter {
@@ -165,12 +179,12 @@ function codePanorama(input: SynthesisInput): BookChapter {
     lines.push('|---|---|---|---|');
     for (const module of modules.slice(0, 25)) {
       lines.push(
-        `| \`${module.module}\` | ${module.total} | ${formatPercent(module.byUser / Math.max(1, module.total))} | ${module.lastTouchedAt.slice(0, 10) || '—'} |`,
+        `| \`${escapeMarkdown(module.module)}\` | ${module.total} | ${formatPercent(module.byUser / Math.max(1, module.total))} | ${module.lastTouchedAt.slice(0, 10) || '—'} |`,
       );
     }
     lines.push('');
   }
-  const top = stats.slice(0, 5).map((stat) => `\`${stat.module}\` in ${stat.repo}`);
+  const top = stats.slice(0, 5).map((stat) => `\`${escapeMarkdown(stat.module)}\` in ${stat.repo}`);
   if (top.length > 0) {
     lines.push(`Their centre of gravity: ${top.join(', ')}.`);
   }
@@ -256,7 +270,7 @@ function decisionFallback(input: SynthesisInput): BookChapter {
     lines.push('No PRs authored by the departing engineer were found in the index.');
   }
   for (const pr of prs) {
-    lines.push(`- [#${pr.number}] **${pr.title}** (${pr.repo})${pr.body ? ` — ${excerpt(pr.body, 400)}` : ''}`);
+    lines.push(`- [#${pr.number}] **${escapeMarkdown(pr.title)}** (${pr.repo})${pr.body ? ` — ${escapeMarkdown(excerpt(pr.body, 400))}` : ''}`);
   }
   return { id: 4, title: CHAPTER_TITLES[4], content: lines.join('\n'), evidence: [], generatedBy: 'deterministic' };
 }

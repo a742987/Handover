@@ -2,8 +2,9 @@
 import { createRequire } from 'node:module';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { Command, InvalidArgumentError } from 'commander';
+import { Command } from 'commander';
 import { loadConfig, type LlmProviderName } from './config.js';
+import { parseRepos, parseSince, parseUsername } from './args.js';
 import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
 import { GitHubCollector, countCollected } from './collect/github.js';
 import { computeRisk } from './risk/engine.js';
@@ -12,25 +13,6 @@ import { requireIndex } from './store/index-check.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json') as { version: string };
-
-function parseRepos(value: string, previous: string[]): string[] {
-  const repos = previous ?? [];
-  for (const part of value.split(',')) {
-    const repo = part.trim();
-    if (repo) {
-      repos.push(repo);
-    }
-  }
-  return repos;
-}
-
-function parseSince(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    throw new InvalidArgumentError('--since expects an ISO date, e.g. 2024-01-01');
-  }
-  return date.toISOString();
-}
 
 function printRiskTable(risks: Array<{ rank: number; module: string; score: number; rationale: string }>): void {
   if (risks.length === 0) {
@@ -59,19 +41,19 @@ program
 program
   .command('gen')
   .description('collect, analyze and render the Handover Book for a departing engineer')
-  .argument('<username>', 'GitHub username of the departing engineer')
+  .argument('<username>', 'GitHub username of the departing engineer', parseUsername)
   .requiredOption('-r, --repo <repo...>', 'owner/name repositories to read (repeat the flag or comma-separate)', parseRepos)
   .option('--provider <provider>', 'LLM provider: openai | anthropic | ollama')
   .option('--model <model>', 'LLM model override')
   .option('--since <date>', 'only collect activity created after this ISO date', parseSince)
-  .option('--data-dir <dir>', 'directory for the SQLite index and the generated book', 'handover-data')
+  .option('--data-dir <dir>', 'directory for the SQLite index and the generated book (default: handover-data, or HANDOVER_DATA_DIR)')
   .option('--refresh', 're-fetch commit details even for already-indexed commits', false)
   .action(async (username: string, options: {
     repo: string[];
     provider?: string;
     model?: string;
     since?: string;
-    dataDir: string;
+    dataDir?: string;
     refresh?: boolean;
   }) => {
     try {
@@ -96,12 +78,12 @@ program
 program
   .command('collect')
   .description('collect GitHub history into the local index without rendering the book')
-  .argument('<username>', 'GitHub username of the departing engineer')
+  .argument('<username>', 'GitHub username of the departing engineer', parseUsername)
   .requiredOption('-r, --repo <repo...>', 'owner/name repositories to read', parseRepos)
   .option('--since <date>', 'only collect activity created after this ISO date', parseSince)
-  .option('--data-dir <dir>', 'directory for the SQLite index', 'handover-data')
+  .option('--data-dir <dir>', 'directory for the SQLite index (default: handover-data, or HANDOVER_DATA_DIR)')
   .option('--refresh', 're-fetch commit details even for already-indexed commits', false)
-  .action(async (username: string, options: { repo: string[]; since?: string; dataDir: string; refresh?: boolean }) => {
+  .action(async (username: string, options: { repo: string[]; since?: string; dataDir?: string; refresh?: boolean }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await mkdir(config.dataDir, { recursive: true });
@@ -132,9 +114,9 @@ program
 program
   .command('risk')
   .description('print the Risk Top 5 from an existing index')
-  .argument('<username>', 'GitHub username')
-  .option('--data-dir <dir>', 'directory holding the SQLite index', 'handover-data')
-  .action(async (username: string, options: { dataDir: string }) => {
+  .argument('<username>', 'GitHub username', parseUsername)
+  .option('--data-dir <dir>', 'directory holding the SQLite index (default: handover-data, or HANDOVER_DATA_DIR)')
+  .action(async (username: string, options: { dataDir?: string }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
@@ -151,13 +133,13 @@ program
 
 program
   .command('render')
-  .description('re-render the Handover Book from an existing index (no network)')
-  .argument('<username>', 'GitHub username')
+  .description('re-render the Handover Book from an existing index (no GitHub network; LLM chapters use the configured provider if an API key is available)')
+  .argument('<username>', 'GitHub username', parseUsername)
   .option('-r, --repo [repo...]', 'owner/name repositories (defaults to the ones recorded in the index)', parseRepos, [])
   .option('--provider <provider>', 'LLM provider: openai | anthropic | ollama')
   .option('--model <model>', 'LLM model override')
-  .option('--data-dir <dir>', 'directory holding the SQLite index', 'handover-data')
-  .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir: string }) => {
+  .option('--data-dir <dir>', 'directory holding the SQLite index (default: handover-data, or HANDOVER_DATA_DIR)')
+  .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir?: string }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);

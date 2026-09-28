@@ -36,6 +36,18 @@ const reposSchema = z
   .array(z.string())
   .describe('owner/name repositories to read, e.g. ["acme/api", "acme/web"]');
 
+const sinceSchema = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/, 'expects an ISO date, e.g. 2024-01-01 or 2024-01-01T10:00:00Z')
+  .optional()
+  .describe('only collect activity created after this ISO date, e.g. 2024-01-01');
+
+const usernameSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/, 'GitHub username must match [A-Za-z0-9-]')
+  .max(39)
+  .describe('GitHub username of the departing engineer');
+
 function textResult(payload: unknown, progress: string[]): {
   content: Array<{ type: 'text'; text: string }>;
 } {
@@ -71,9 +83,9 @@ server.registerTool(
       'SQLite index, compute the Risk Top 5, and render the bound, evidence-linked Handover Book. ' +
       'Second runs for the same person are incremental and near-instant. Requires GITHUB_TOKEN in the environment.',
     inputSchema: {
-      username: z.string().describe('GitHub username of the departing engineer'),
+      username: usernameSchema,
       repos: reposSchema,
-      since: z.string().optional().describe('only collect activity created after this ISO date, e.g. 2024-01-01'),
+      since: sinceSchema,
       provider: providerSchema,
       model: z.string().optional().describe('LLM model override'),
       dataDir: dataDirSchema,
@@ -121,9 +133,9 @@ server.registerTool(
       'without rendering the book. Already-indexed items are skipped. Use this to build or refresh an index ' +
       'before generating or while exploring. Requires GITHUB_TOKEN in the environment.',
     inputSchema: {
-      username: z.string().describe('GitHub username of the departing engineer'),
+      username: usernameSchema,
       repos: reposSchema,
-      since: z.string().optional().describe('only collect activity created after this ISO date, e.g. 2024-01-01'),
+      since: sinceSchema,
       dataDir: dataDirSchema,
       refresh: z.boolean().optional().describe('re-fetch commit details even for already-indexed commits (default false)'),
     },
@@ -160,7 +172,7 @@ server.registerTool(
       'leaves, each with the exact commits, reviews, and issues that justify its score. No network access; ' +
       'run handover_generate or handover_collect first.',
     inputSchema: {
-      username: z.string().describe('GitHub username the index was collected for'),
+      username: usernameSchema,
       dataDir: dataDirSchema,
     },
   },
@@ -186,10 +198,10 @@ server.registerTool(
   {
     title: 'Render Handover Book',
     description:
-      'Re-render the Handover Book from an existing local index without touching the network. Chapters 4-6 use ' +
-      'the configured LLM provider, or deterministic fallbacks when no API key is available.',
+      'Re-render the Handover Book from an existing local index. No GitHub network access. Chapters 4-6 use the ' +
+      'configured LLM provider when its API key is set in the environment; otherwise deterministic fallbacks are used.',
     inputSchema: {
-      username: z.string().describe('GitHub username the index was collected for'),
+      username: usernameSchema,
       repos: z.array(z.string()).optional().describe('owner/name repositories (defaults to the ones recorded in the index)'),
       provider: providerSchema,
       model: z.string().optional().describe('LLM model override'),

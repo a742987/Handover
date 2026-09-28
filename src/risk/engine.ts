@@ -46,7 +46,7 @@ export function firstLine(text: string, max = 120): string {
  */
 export function computeRisk(store: HandoverStore, username: string, options: RiskOptions = {}): RiskItem[] {
   const now = options.now ?? new Date();
-  const windowStartIso = new Date(now.getTime() - (options.windowDays ?? 90) * DAY_MS).toISOString();
+  const windowStartMs = now.getTime() - (options.windowDays ?? 90) * DAY_MS;
   const topN = options.topN ?? 5;
 
   const modules = new Map<string, ModuleAccumulator>();
@@ -97,8 +97,12 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
         }
       }
     }
-    const isRecent = commit.authoredAt >= windowStartIso;
+    const authoredAtMs = Date.parse(commit.authoredAt);
+    const isRecent = Number.isFinite(authoredAtMs) && authoredAtMs >= windowStartMs;
     const isUser = commit.authorLogin === username;
+    // Exclude 'unknown' authors from total: they are unattributed commits (e.g. email
+    // patches, migrations) and would otherwise dilute sole-contribution ratios.
+    const isKnownAuthor = commit.authorLogin !== 'unknown';
     // a commit touching several files of one module counts once, not per file
     const countedModules = new Set<string>();
     for (const file of commit.files) {
@@ -108,9 +112,11 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
       }
       countedModules.add(key);
       const module = acc(key);
-      module.total += 1;
-      if (isRecent) {
-        module.recent += 1;
+      if (isKnownAuthor) {
+        module.total += 1;
+        if (isRecent) {
+          module.recent += 1;
+        }
       }
       if (isUser) {
         module.byUser += 1;
@@ -213,7 +219,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
       const issueRefs = [...module.bugIssues].map((n) => `#${n}`).join(', ');
       parts.push(`${module.bugMentions} of those commits reference bug-labelled issues (${issueRefs})`);
     }
-    parts.push(`recent activity score ${frequency.toFixed(2)} ${useLifetime ? '(lifetime, repo quiet in window)' : '(last 90 days)'}`);
+    parts.push(`recent activity score ${frequency.toFixed(2)} ${useLifetime ? '(lifetime, repo quiet in window)' : '(last ' + (options.windowDays ?? 90) + ' days)'}`);
 
     return {
       rank: 0,

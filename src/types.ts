@@ -79,6 +79,8 @@ export interface PullRequestRecord {
   changedFiles: number;
   /** last GitHub-side activity; used to decide whether the cached row is still current */
   updatedAt?: string | null;
+  /** head branch sha; covers new commits pushed (which updated_at does not bump) */
+  headSha?: string | null;
 }
 
 /** A module is the top-level directory of a changed file; root files form the "(root)" module. */

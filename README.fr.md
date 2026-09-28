@@ -5,7 +5,7 @@
 > **Quand un·e développeur·se part, son savoir ne devrait pas partir avec lui.**
 > Pointez Handover vers le nom d'utilisateur d'un ingénieur sur le départ, et il lira tout ce qu'il ou elle a jamais commité, relu et défendu — puis produira un **Livre de Passation** (Handover Book) relié et adossé aux preuves, pour la personne qui prend la relève.
 
-Une seule commande. Entièrement local. Rien de votre base de code ne quitte jamais votre machine.
+Une seule commande. S'exécute localement. Lorsqu'un fournisseur LLM est configuré (par défaut), le contenu du dépôt collecté lui est envoyé pour synthèse ; sans clé API, tout reste déterministe et local.
 
 ```bash
 handover gen <username> --repo owner/name
@@ -28,10 +28,10 @@ Handover couvre les pertes implicites que rien d'autre ne couvre :
 
 ## Démarrage rapide
 
-Prérequis : **Node ≥ 22.5** (livré avec SQLite intégré — pas de compilation native), un token GitHub pour des limites de requêtes raisonnables.
+Prérequis : **Node ≥ 22.13** (livré avec SQLite intégré — pas de compilation native), un token GitHub pour des limites de requêtes raisonnables.
 
 ```bash
-git clone <this repo> && cd handover
+git clone https://github.com/a742987/Handover.git && cd Handover
 npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
@@ -50,7 +50,7 @@ Le résultat atterrit dans `handover-data/` :
 | `gen <username> -r owner/name` | collecter → analyser → générer le livre complet |
 | `collect <username> -r owner/name` | indexer uniquement l'historique GitHub (les commits, PRs, reviews et issues déjà présents dans l'index sont ignorés) |
 | `risk <username>` | afficher le Top 5 des risques à partir de l'index local |
-| `render <username>` | régénérer le livre à partir de l'index (sans réseau ; les dépôts sont lus depuis l'index, passez `-r` pour les remplacer) |
+| `render <username>` | régénérer le livre à partir de l'index, sans accès à GitHub (les chapitres 4-6 n'appellent le fournisseur LLM que si une clé API est configurée ; passez `-r` pour remplacer les dépôts enregistrés dans l'index) |
 
 Flags courants : `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (récupère à nouveau ce qui est déjà indexé).
 
@@ -98,7 +98,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 **Claude Code** — installez le plugin fourni :
 
 ```
-/plugin marketplace add <this-repo>
+/plugin marketplace add a742987/Handover
 /plugin install handover@handover
 ```
 
@@ -122,7 +122,7 @@ Le plugin enregistre automatiquement le serveur MCP `handover` (via le champ `mc
 ## Vie privée et éthique — lisez ceci avant de le lancer pour quelqu'un
 
 - **Un cadeau, pas un audit.** Handover existe pour remettre la carte à la personne qui succède, jamais pour noter celle qui part. Lancez-le *avec* l'ingénieur sur le départ, pas derrière son dos. Ses commentaires de review et messages de commit seront cités devant ses collègues — s'il ne l'écrirait pas dans un document d'adieu, ça n'a pas sa place dans le livre.
-- **Local d'abord.** Collecte, indexation, synthèse et rendu s'exécutent tous sur votre machine. Les seuls appels réseau vont à l'API de GitHub et à votre fournisseur de LLM configuré. Choisissez **Ollama** et pas un seul octet du contenu du dépôt ne parvient à un tiers.
+- **Local d'abord.** Collecte, indexation et rendu s'exécutent tous sur votre machine. Les seuls appels réseau vont à l'API de GitHub et à votre fournisseur de LLM configuré. Choisissez **Ollama** et pas un seul octet du contenu du dépôt ne parvient à un tiers.
 - **L'index est sensible.** `handover-data/*.db` contient tout l'historique de commits de votre équipe. Il est gitignoré par défaut ; traitez le fichier comme un identifiant secret.
 - **L'hallucination est un bug, pas une bizarrerie.** La sortie du LLM doit citer des références de preuves ; les affirmations non étayées doivent être marquées *(inférence)*. Ne faites confiance à aucun chapitre que vous n'avez pas vérifié contre sa chaîne de preuves.
 - **L'anonymisation** (noms réels → codes de rôle, pour les contextes RH) figure sur la feuille de route avant toute version équipe/entreprise.

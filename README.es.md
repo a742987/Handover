@@ -5,7 +5,7 @@
 > **Cuando una persona desarrolladora se va, su conocimiento no debería irse con ella.**
 > Apunta Handover al nombre de usuario de un ingeniero que se marcha, y leerá todo lo que jamás haya confirmado, revisado o defendido — para luego producir un **Libro de Relevo** (Handover Book) encuadernado y con enlaces a la evidencia, para quien ocupe su puesto.
 
-Un solo comando. Completamente local. Nada de tu base de código sale nunca de tu máquina.
+Un solo comando. Se ejecuta localmente. Cuando se configura un proveedor LLM (lo predeterminado), el contenido del repositorio recopilado se envía a él para su síntesis; sin una clave API, todo permanece determinista y local.
 
 ```bash
 handover gen <username> --repo owner/name
@@ -28,10 +28,10 @@ Handover cubre las pérdidas implícitas que nada más cubre:
 
 ## Inicio rápido
 
-Requisitos: **Node ≥ 22.5** (incluye SQLite integrado — sin compilación nativa), un token de GitHub para unos límites de peticiones razonables.
+Requisitos: **Node ≥ 22.13** (incluye SQLite integrado — sin compilación nativa), un token de GitHub para unos límites de peticiones razonables.
 
 ```bash
-git clone <this repo> && cd handover
+git clone https://github.com/a742987/Handover.git && cd Handover
 npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
@@ -50,7 +50,7 @@ El resultado queda en `handover-data/`:
 | `gen <username> -r owner/name` | recopilar → analizar → renderizar el libro completo |
 | `collect <username> -r owner/name` | solo indexa el historial de GitHub (los commits, PRs, reviews e issues ya presentes en el índice se omiten) |
 | `risk <username>` | imprime el Top 5 de riesgos a partir del índice local |
-| `render <username>` | vuelve a renderizar el libro desde el índice (sin red; los repositorios se leen del índice, pasa `-r` para sobrescribirlos) |
+| `render <username>` | vuelve a renderizar el libro desde el índice, sin acceso a GitHub (los capítulos 4-6 solo llaman al proveedor LLM si hay una clave API configurada; pasa `-r` para sobrescribir los repositorios registrados en el índice) |
 
 Flags comunes: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (vuelve a obtener lo que ya está indexado).
 
@@ -98,7 +98,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 **Claude Code** — instala el plugin incluido:
 
 ```
-/plugin marketplace add <this-repo>
+/plugin marketplace add a742987/Handover
 /plugin install handover@handover
 ```
 
@@ -122,7 +122,7 @@ El plugin registra automáticamente el servidor MCP `handover` (mediante el camp
 ## Privacidad y ética — lee esto antes de ejecutarlo para alguien
 
 - **Un regalo, no una auditoría.** Handover existe para entregar el mapa a quien sucede, nunca para calificar a quien se marcha. Ejecútalo *con* el ingeniero saliente, no a sus espaldas. Sus comentarios de review y mensajes de commit se citarán ante sus colegas — si no lo diría en un documento de despedida, no pertenece al libro.
-- **Local primero.** La recopilación, indexación, síntesis y renderizado se ejecutan en tu máquina. Las únicas llamadas de red son a la API de GitHub y a tu proveedor de LLM configurado. Elige **Ollama** y ni un solo byte del contenido del repositorio llega a terceros.
+- **Local primero.** La recopilación, indexación y renderizado se ejecutan en tu máquina. Las únicas llamadas de red son a la API de GitHub y a tu proveedor de LLM configurado. Elige **Ollama** y ni un solo byte del contenido del repositorio llega a terceros.
 - **El índice es sensible.** `handover-data/*.db` contiene todo el historial de commits de tu equipo. Está en el gitignore por defecto; trata el archivo como una credencial.
 - **La alucinación es un bug, no una peculiaridad.** La salida del LLM debe citar referencias de evidencia; las afirmaciones sin respaldo deben marcarse como *(inferencia)*. No te fíes de ningún capítulo que no hayas cotejado con su cadena de evidencia.
 - **Anonimización** (nombres reales → códigos de rol, para contextos de RR. HH.) está en la hoja de ruta antes de lanzar cualquier nivel de equipo/empresa.

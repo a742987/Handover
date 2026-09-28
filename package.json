@@ -7,13 +7,14 @@
   "author": "Handover contributors",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/TODO/handover.git"
+    "url": "git+https://github.com/a742987/Handover.git"
   },
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "files": [
     "dist",
+    "codex",
     "README.md",
     "LICENSE"
   ],
@@ -33,7 +34,7 @@
     "build": "tsc",
     "dev": "tsx src/cli.ts",
     "mcp": "node dist/mcp.js",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },

@@ -121,6 +121,7 @@ export async function renderHandoverBook(
     model: options.model,
   });
   const onProgress = options.onProgress ?? (() => {});
+  await mkdir(config.dataDir, { recursive: true });
   const store = new HandoverStore(dbPathFor(config, options.username));
   try {
     let repos = options.repos ?? [];

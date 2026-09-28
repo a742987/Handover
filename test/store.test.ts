@@ -102,4 +102,66 @@ describe('HandoverStore', () => {
     expect(store.hasIssue(REPO, 10)).toBe(true);
     expect(store.hasIssue(REPO, 11)).toBe(false);
   });
+
+  it('treats a changed head sha as stale even when updated_at is current', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertPullRequest({
+      repo: REPO, number: 1, title: 't', authorLogin: 'alice', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', mergedAt: null, body: '', additions: 0, deletions: 0, changedFiles: 0,
+      updatedAt: '2026-09-02T00:00:00Z', headSha: 'aaaa',
+    });
+    // same updated_at + same head sha → fresh; new push (different sha) → stale
+    expect(store.hasPullRequest(REPO, 1, '2026-09-02T00:00:00Z', 'aaaa')).toBe(true);
+    expect(store.hasPullRequest(REPO, 1, '2026-09-02T00:00:00Z', 'bbbb')).toBe(false);
+    // newer GitHub-side activity than the cache is stale regardless of sha
+    expect(store.hasPullRequest(REPO, 1, '2026-09-03T00:00:00Z', 'aaaa')).toBe(false);
+    // a cached row newer than what GitHub reports is still fresh
+    expect(store.hasPullRequest(REPO, 1, '2026-09-01T00:00:00Z', 'aaaa')).toBe(true);
+  });
+
+  it('clears every table for repos outside the given scope, keeping the rest', () => {
+    const store = HandoverStore.inMemory();
+    const other = 'other/repo';
+    store.upsertCommit(commit('a'.repeat(40), 'alice', '2026-09-01T00:00:00Z', ['payments/a.ts']));
+    store.upsertCommit({ ...commit('b'.repeat(40), 'bob', '2026-09-01T00:00:00Z', ['src/b.ts']), repo: other });
+    store.upsertIssue({
+      repo: other, number: 1, title: 't', authorLogin: 'bob', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', closedAt: null, labels: ['bug'],
+      comments: [{ id: 5, number: 1, authorLogin: 'alice', createdAt: '2026-09-01T00:00:00Z', body: 'x' }],
+    });
+    store.clearRepositoriesExcept([REPO]);
+
+    expect(store.allCommits().map((c) => c.repo)).toEqual([REPO]);
+    expect(store.allIssues()).toHaveLength(0);
+    // meta survives repo cleanup
+    store.setMeta('repos', REPO);
+    expect(store.getMeta('repos')).toBe(REPO);
+  });
+
+  it('deletes reviews (and their comments) that were not seen on refetch', () => {
+    const store = HandoverStore.inMemory();
+    const review = (id: number): ReviewRecord => ({
+      id, repo: REPO, prNumber: 1, reviewerLogin: 'alice', state: 'APPROVED',
+      submittedAt: '2026-09-01T00:00:00Z', body: '',
+      comments: [{ id: id * 10, reviewId: id, path: 'payments/a.ts', body: 'note', authorLogin: 'alice' }],
+    });
+    store.upsertReview(review(1));
+    store.upsertReview(review(2));
+
+    store.deleteReviewsNotSeen(REPO, 1, [1]);
+    const reviews = store.allReviews();
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]?.id).toBe(1);
+    expect(reviews[0]?.comments).toHaveLength(1);
+  });
+
+  it('wipes all reviews for a PR when none were seen on refetch', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertReview({
+      id: 1, repo: REPO, prNumber: 1, reviewerLogin: 'alice', state: 'APPROVED',
+      submittedAt: '2026-09-01T00:00:00Z', body: '', comments: [],
+    });
+    store.deleteReviewsNotSeen(REPO, 1, []);
+    expect(store.allReviews()).toHaveLength(0);
+  });
 });

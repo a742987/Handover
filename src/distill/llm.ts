@@ -80,8 +80,14 @@ function createOpenAiProvider(config: HandoverConfig): LlmProvider {
             { role: 'user', content: user },
           ],
         },
-      )) as { choices?: Array<{ message?: { content?: string } }> };
-      return data.choices?.[0]?.message?.content ?? '';
+      )) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };
+      const choice = data.choices?.[0];
+      const content = choice?.message?.content ?? '';
+      // finish_reason === 'length' means max_tokens was hit; warn but don't fail
+      if (choice?.finish_reason === 'length') {
+        throw new Error('OpenAI response was truncated (finish_reason=length) — increase max_tokens or shorten input');
+      }
+      return content;
     },
   };
 }
@@ -100,16 +106,21 @@ function createAnthropicProvider(config: HandoverConfig): LlmProvider {
         { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
         {
           model: config.model,
-          max_tokens: 4096,
+          max_tokens: 8192,
           temperature: 0.2,
           system,
           messages: [{ role: 'user', content: user }],
         },
-      )) as { content?: Array<{ type?: string; text?: string }> };
-      return (data.content ?? [])
+      )) as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string };
+      const content = (data.content ?? [])
         .filter((block) => block.type === 'text')
         .map((block) => block.text ?? '')
         .join('');
+      // stop_reason === 'max_tokens' means the response was truncated
+      if (data.stop_reason === 'max_tokens') {
+        throw new Error('Anthropic response was truncated (stop_reason=max_tokens) — increase max_tokens or shorten input');
+      }
+      return content;
     },
   };
 }
@@ -131,8 +142,13 @@ function createOllamaProvider(config: HandoverConfig): LlmProvider {
             { role: 'user', content: user },
           ],
         },
-      )) as { message?: { content?: string } };
-      return data.message?.content ?? '';
+      )) as { message?: { content?: string }; done_reason?: string };
+      const content = data.message?.content ?? '';
+      // done_reason === 'length' means the response was truncated
+      if (data.done_reason === 'length') {
+        throw new Error('Ollama response was truncated (done_reason=length) — increase num_predict or shorten input');
+      }
+      return content;
     },
   };
 }

@@ -5,7 +5,7 @@ description: Generate or work with a Handover Book — an evidence-linked offboa
 
 # Handover
 
-Point Handover at a departing engineer's GitHub username and it produces a bound, evidence-linked Handover Book. Everything is computed locally; only GitHub is read, nothing is written back.
+Point Handover at a departing engineer's GitHub username and it produces a bound, evidence-linked Handover Book. Collection and rendering run locally; only GitHub is read, and when an LLM provider is configured, collected content is sent to it for synthesis.
 
 ## The book's six chapters
 

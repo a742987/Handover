@@ -10,6 +10,11 @@ function tableCell(text: string): string {
   return text.replace(/\|/g, '\\|');
 }
 
+/** Escape markdown special characters in untrusted user-generated content (PR titles, commit messages). */
+function escapeMarkdown(text: string): string {
+  return text.replace(/([\\`*_{}[\]()#+\-.!|])/g, '\\$1').replace(/\n/g, ' ');
+}
+
 function evidenceLink(ref: EvidenceRef): string {
   return ref.url ? `[\`${ref.ref}\`](${ref.url})` : `\`${ref.ref}\``;
 }
@@ -21,9 +26,9 @@ function evidenceLink(ref: EvidenceRef): string {
 export function renderBook(book: HandoverBook): string {
   const lines: string[] = [];
 
-  lines.push(`# Handover Book — @${book.username}`, '');
+  lines.push(`# Handover Book — @${escapeMarkdown(book.username)}`, '');
   lines.push(`*When a developer leaves, their knowledge shouldn't.*`, '');
-  lines.push(`- **Repositories:** ${book.repos.join(', ')}`);
+  lines.push(`- **Repositories:** ${book.repos.map(escapeMarkdown).join(', ')}`);
   lines.push(`- **Generated:** ${book.generatedAt}`);
   lines.push(`- **Chapters:** ${book.chapters.length}`);
   lines.push(
@@ -32,10 +37,15 @@ export function renderBook(book: HandoverBook): string {
   );
   const usedLlm = book.chapters.some((chapter) => chapter.generatedBy === 'llm');
   const provider = `${book.llmProvider ?? 'an external LLM provider'}${book.llmModel ? ` (${book.llmModel})` : ''}`;
+  // Privacy claim: if LLM was configured (llmProvider is set), content was sent regardless of whether
+  // chapters succeeded. Only claim "nothing uploaded" when no provider was configured at all.
+  const llmWasConfigured = book.llmProvider !== undefined;
   lines.push(
     usedLlm
       ? `> This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; the LLM-synthesized chapters were written by ${provider}, to which collected repository content was sent. Claims without an evidence ref are labelled *(inference)*.`
-      : `> This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; nothing was uploaded anywhere. Claims without an evidence ref are labelled *(inference)*.`,
+      : llmWasConfigured
+        ? `> This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; an LLM provider was configured and collected content was sent to it, but synthesis failed and deterministic fallbacks were used. Claims without an evidence ref are labelled *(inference)*.`
+        : `> This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; nothing was uploaded anywhere. Claims without an evidence ref are labelled *(inference)*.`,
     '',
   );
 
@@ -46,7 +56,7 @@ export function renderBook(book: HandoverBook): string {
   lines.push('');
 
   for (const chapter of book.chapters) {
-    lines.push(`## ${chapter.id}. ${chapter.title}`, '');
+    lines.push(`## ${chapter.id}. ${escapeMarkdown(chapter.title)}`, '');
     lines.push(chapter.content.trim(), '');
   }
 

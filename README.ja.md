@@ -5,7 +5,7 @@
 > **開発者が退職しても、その知識まで連れていかれてはならない。**
 > 退職するエンジニアのユーザー名を Handover に渡せば、その人がコミットし、レビューし、そして議論してきたすべてを読み取り —— 後任者のための、証拠へのリンクが付いた製本済みの **Handover Book（引き継ぎマニュアル）** を生成します。
 
-コマンド一つ。完全ローカル。コードベースに関する情報が、あなたのマシンの外に出ることは一切ありません。
+コマンド一つ。ローカルで動作。LLM プロバイダーが設定されている場合（デフォルト）、収集されたリポジトリのコンテンツは合成のためにそのプロバイダーに送信されます。API キーが設定されていない場合、すべては決定論的にローカルで処理されます。
 
 ```bash
 handover gen <username> --repo owner/name
@@ -28,10 +28,10 @@ Handover は、他のどのツールもカバーできない暗黙知の損失�
 
 ## クイックスタート
 
-要件：**Node ≥ 22.5**（SQLite が組み込み — ネイティブコンパイル不要）、および適度なレート制限のための GitHub トークン。
+要件：**Node ≥ 22.13**（SQLite が組み込み — ネイティブコンパイル不要）、および適度なレート制限のための GitHub トークン。
 
 ```bash
-git clone <this repo> && cd handover
+git clone https://github.com/a742987/Handover.git && cd Handover
 npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
@@ -50,7 +50,7 @@ npm run dev -- gen <username> --repo owner/name
 | `gen <username> -r owner/name` | 収集 → 分析 → マニュアル全体をレンダリング |
 | `collect <username> -r owner/name` | GitHub 履歴のインデックス化のみ（インデックス済みの commit、PR、レビュー、issue はスキップされます） |
 | `risk <username>` | ローカルインデックスからリスク Top 5 を表示 |
-| `render <username>` | インデックスからマニュアルを再レンダリング（ネットワーク接続なし。リポジトリ情報はインデックスから読み込まれ、`-r` で上書き可能） |
+| `render <username>` | インデックスからマニュアルを再レンダリング（GitHub への接続なし。第 4-6 章は API キーが設定されている場合にのみ LLM プロバイダーを呼び出します。`-r` でインデックスに記録されたリポジトリを上書き可能） |
 
 よく使うフラグ: `--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`、`--data-dir <dir>`、`--refresh`（インデックス済みの内容を再取得）。
 
@@ -98,7 +98,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 **Claude Code** — バンドルされたプラグインをインストール:
 
 ```
-/plugin marketplace add <this-repo>
+/plugin marketplace add a742987/Handover
 /plugin install handover@handover
 ```
 
@@ -122,7 +122,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 ## プライバシーと倫理 — 誰かのために実行する前に読んでください
 
 - **監査ではなく、贈り物。** Handover は後任者に地図を手渡すために存在し、退職する人を評価するためでは決してありません。退職するエンジニアと*一緒に*実行してください。彼らのいないところで実行しないでください。そのレビューコメントや commit メッセージは同僚にそのまま引用されます — 送別文書で言えないようなことは、マニュアルに載せるべきではありません。
-- **ローカルファースト。** 収集、インデックス化、生成、レンダリングはすべてあなたのマシン上で実行されます。ネットワーク接続は GitHub API と設定済みの LLM プロバイダーへの呼び出しのみ。**Ollama** を選べば、リポジトリの内容は 1 バイトも第三者に届きません。
+- **ローカルファースト。** 収集、インデックス化、レンダリングはすべてあなたのマシン上で実行されます。ネットワーク接続は GitHub API と設定済みの LLM プロバイダーへの呼び出しのみ。**Ollama** を選べば、リポジトリの内容は 1 バイトも第三者に届きません。
 - **インデックスは機密情報です。** `handover-data/*.db` にはチームの完全な commit 履歴が含まれます。デフォルトで gitignore されています。このファイルは認証情報（クレデンシャル）と同じように扱ってください。
 - **ハルシネーションはバグであり、仕様ではありません。** LLM の出力には証拠参照（evidence refs）の引用が必須で、裏付けのない主張には *(inference)* のラベルを付けなければなりません。証拠チェーンと照合して確認していない章は信じないでください。
 - **匿名化**（実名 → 役割コード、HR 向け）は、チーム/エンタープライズ版の提供前に実装するロードマップ項目です。

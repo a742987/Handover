@@ -5,7 +5,7 @@
 > **When a developer leaves, their knowledge shouldn't.**
 > Point Handover at a departing engineer's username, and it reads everything they ever committed, reviewed, and argued for — then produces a bound, evidence-linked **Handover Book** for the person who takes their place.
 
-One command. Fully local. Nothing about your codebase ever leaves your machine.
+One command. Runs locally. When an LLM provider is configured (the default), collected repository content is sent to it for synthesis; without an API key, everything stays deterministic and local.
 
 ```bash
 handover gen <username> --repo owner/name
@@ -28,10 +28,10 @@ Handover covers the implicit losses nothing else covers:
 
 ## Quick start
 
-Requirements: **Node ≥ 22.5** (ships with built-in SQLite — no native compilation), a GitHub token for reasonable rate limits.
+Requirements: **Node ≥ 22.13** (ships with built-in SQLite — no native compilation), a GitHub token for reasonable rate limits.
 
 ```bash
-git clone <this repo> && cd handover
+git clone https://github.com/a742987/Handover.git && cd Handover
 npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
@@ -50,7 +50,7 @@ Output lands in `handover-data/`:
 | `gen <username> -r owner/name` | collect → analyze → render the full book |
 | `collect <username> -r owner/name` | index GitHub history only (commits, PRs, reviews and issues already in the index are skipped) |
 | `risk <username>` | print the Risk Top 5 from the local index |
-| `render <username>` | re-render the book from the index (no network; repositories are read from the index, pass `-r` to override) |
+| `render <username>` | re-render the book from the index without GitHub access (chapters 4-6 call the LLM provider only if an API key is set; pass `-r` to override the repositories recorded in the index) |
 
 Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed).
 
@@ -98,7 +98,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 **Claude Code** — install the bundled plugin:
 
 ```
-/plugin marketplace add <this-repo>
+/plugin marketplace add a742987/Handover
 /plugin install handover@handover
 ```
 
@@ -122,7 +122,7 @@ The plugin registers the `handover` MCP server automatically (via the `mcpServer
 ## Privacy and ethics — read this before you run it for someone
 
 - **A gift, not an audit.** Handover exists to hand a successor the map, never to grade the person leaving. Run it *with* the departing engineer, not around them. Their review comments and commit messages are quoted back to colleagues — if they wouldn't say it in a farewell doc, it doesn't belong in the book.
-- **Local-first.** Collection, indexing, synthesis, and rendering all run on your machine. The only network calls are to GitHub's API and your configured LLM provider. Choose **Ollama** and not a single byte of repository content reaches any third party.
+- **Local-first.** Collection, indexing, and rendering all run on your machine. The only network calls are to GitHub's API and your configured LLM provider. Choose **Ollama** and not a single byte of repository content reaches any third party.
 - **The index is sensitive.** `handover-data/*.db` contains your team's full commit history. It is gitignored by default; treat the file like a credential.
 - **Hallucination is a bug, not a quirk.** LLM output must cite evidence refs; unsupported claims must be labelled *(inference)*. Don't trust a chapter you haven't spot-checked against its evidence chain.
 - **Anonymization** (real names → role codes, for HR contexts) is on the roadmap before any team/enterprise tier ships.

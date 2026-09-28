@@ -32,7 +32,7 @@ export function loadConfig(overrides: Partial<HandoverConfig> = {}): HandoverCon
     githubToken: overrides.githubToken ?? env('GITHUB_TOKEN') ?? '',
     provider,
     model: overrides.model ?? env('HANDOVER_MODEL') ?? DEFAULT_MODELS[provider],
-    ollamaUrl: env('OLLAMA_URL') ?? 'http://localhost:11434',
+    ollamaUrl: overrides.ollamaUrl ?? env('OLLAMA_URL') ?? 'http://localhost:11434',
     dataDir: overrides.dataDir ?? env('HANDOVER_DATA_DIR') ?? 'handover-data',
   };
 }

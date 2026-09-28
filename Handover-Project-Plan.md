@@ -1,5 +1,12 @@
 # Handover — The Day a Developer Leaves, Their Knowledge Shouldn't
 
+> **Note (2026-09-28):** this is the original project plan, kept for reference.
+> Where it disagrees with the current implementation, the README and source are
+> authoritative. Known divergences: output is markdown-only (no PDF/HTML reader
+> yet), collection is REST-only (no GraphQL/reactions), chapters 1–3 are
+> deterministic and only 4–6 use the LLM (the plan reversed this), and
+> `-r owner/name` is required (`npx handover gen <username>` alone does not work).
+
 > **One command.** Point Handover at a departing engineer's username, and it reads everything they ever committed, reviewed, and argued for — then produces a bound, evidence-linked *Handover Book* for the person who takes their place.
 
 | | |

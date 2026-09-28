@@ -5,7 +5,7 @@
 > **开发者离开时，他们的知识不应该随之离开。**
 > 把离职工程师的用户名交给 Handover，它会读取他们提交过、评审过、为之争论过的一切 —— 然后为接任者生成一本装订成册、证据可溯的 **Handover Book（交接手册）**。
 
-一条命令。完全本地运行。你的代码库的任何信息都不会离开你的机器。
+一条命令。在本地运行。配置了 LLM 提供商时（默认行为），收集到的仓库内容会被发送到该提供商进行合成；未配置 API 密钥时，所有内容都保持确定性本地处理。
 
 ```bash
 handover gen <username> --repo owner/name
@@ -28,10 +28,10 @@ Handover 覆盖其他工具无法覆盖的隐性损失：
 
 ## 快速开始
 
-环境要求：**Node ≥ 22.5**（内置 SQLite —— 无需原生编译），以及一个用于合理速率限制的 GitHub token。
+环境要求：**Node ≥ 22.13**（内置 SQLite —— 无需原生编译），以及一个用于合理速率限制的 GitHub token。
 
 ```bash
-git clone <this repo> && cd handover
+git clone https://github.com/a742987/Handover.git && cd Handover
 npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
@@ -50,7 +50,7 @@ npm run dev -- gen <username> --repo owner/name
 | `gen <username> -r owner/name` | 采集 → 分析 → 渲染出完整手册 |
 | `collect <username> -r owner/name` | 仅索引 GitHub 历史（索引中已有的 commit、PR、review 和 issue 会被跳过） |
 | `risk <username>` | 从本地索引打印风险 Top 5 |
-| `render <username>` | 从索引重新渲染手册（不访问网络；仓库信息从索引读取，可用 `-r` 覆盖） |
+| `render <username>` | 从索引重新渲染手册，不访问 GitHub（第 4-6 章仅在配置了 API 密钥时才调用 LLM 提供方；可用 `-r` 覆盖索引中记录的仓库） |
 
 常用参数：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`、`--data-dir <dir>`、`--refresh`（重新抓取已索引的内容）。
 
@@ -98,7 +98,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 **Claude Code** —— 安装随附的插件：
 
 ```
-/plugin marketplace add <this-repo>
+/plugin marketplace add a742987/Handover
 /plugin install handover@handover
 ```
 
@@ -122,7 +122,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 ## 隐私与伦理 —— 在为别人运行之前请先读这一节
 
 - **这是一份礼物，不是一次审计。** Handover 的存在是为了把地图交到接任者手中，绝不是给离职者打分。请*与*离职工程师一起运行它，而不是绕开他们。他们的 review 评论和 commit 信息会被原话引用给同事 —— 如果他们不会在告别文档里这样说，那它就不该出现在手册里。
-- **本地优先。** 采集、索引、生成和渲染全部在你的机器上运行。仅有的网络调用是发往 GitHub API 和你配置的 LLM 提供方。选择 **Ollama**，仓库内容将连一个字节都不会到达任何第三方。
+- **本地优先。** 采集、索引和渲染全部在你的机器上运行。仅有的网络调用是发往 GitHub API 和你配置的 LLM 提供方。选择 **Ollama**，仓库内容将连一个字节都不会到达任何第三方。
 - **索引文件是敏感的。** `handover-data/*.db` 包含你们团队的完整 commit 历史。它默认已被 gitignore；请像对待凭据一样对待这个文件。
 - **幻觉是 bug，不是小毛病。** LLM 输出必须引用证据引用（evidence refs）；无依据的说法必须标注 *(inference)*。别相信任何你还没有对照证据链抽查过的章节。
 - **匿名化**（真实姓名 → 角色代号，用于 HR 场景）已列入路线图，将在任何团队/企业版发布之前完成。
