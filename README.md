@@ -185,7 +185,8 @@ Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM p
 - [x] `handover_search` MCP tool + `--redact` secret scrubbing
 - [x] Action-summary first page with data coverage, `handover verify` citation check, explicit `--no-llm` off-switch
 - [x] Committed sample book with verification record (`examples/sample-report/`)
-- [ ] `npx handover-book gen` end-to-end on a real public repo (MVP, weeks 1–3)
+- [x] Clean-environment end-to-end from the published npm package: install → `gen` (local Git, `--no-llm`) → `verify` ([verification record](docs/install-verification.md))
+- [ ] GitHub-token collection (`-r owner/name`) end-to-end on a public repo, and one Unix environment in the clean run
 - [ ] Local web reader with evidence deep links (v0.2)
 - [ ] Org-wide capability risk map (v1.0)
 

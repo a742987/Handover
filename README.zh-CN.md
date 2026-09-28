@@ -185,7 +185,8 @@ npm run sample      # 重新生成仓库内样例手册（examples/sample-report
 - [x] `handover_search` MCP 工具 + `--redact` 密钥清洗
 - [x] 行动摘要首页（含数据覆盖说明）、`handover verify` 引用检查、显式 `--no-llm` 关闭开关
 - [x] 仓库内样例手册与核验记录（`examples/sample-report/`）
-- [ ] 在一个真实的公开仓库上端到端跑通 `npx handover-book gen`（MVP，第 1–3 周）
+- [x] 从已发布的 npm 包在干净环境端到端跑通：安装 → `gen`（本地 Git，`--no-llm`）→ `verify`（[验证记录](docs/install-verification.md)）
+- [ ] 用 GitHub token 在公开仓库上端到端跑通采集路径（`-r owner/name`），并在干净环境中覆盖一个 Unix 环境
 - [ ] 带证据深层链接的本地 web 阅读器（v0.2）
 - [ ] 组织级能力风险地图（v1.0）
 
