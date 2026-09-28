@@ -2,6 +2,13 @@
 
 Notable changes to the `handover-book` npm package and the CLI. Dates are UTC.
 
+## 0.1.2 — 2026-09-28
+
+Documentation-only release; no code changes since 0.1.1.
+
+- Added `CHANGELOG.md` and a clean-environment installation verification record (`docs/install-verification.md`): published-package install → `gen` (local Git, `--no-llm`) → `verify`, all passing on Windows/Node 24.
+- README roadmap updated to reflect the verified end-to-end run; the GitHub-token collection path and Unix environments remain open items.
+
 ## 0.1.1 — 2026-09-28
 
 Published to npm as [`handover-book@0.1.1`](https://www.npmjs.com/package/handover-book/v/0.1.1).

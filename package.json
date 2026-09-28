@@ -1,6 +1,6 @@
 {
   "name": "handover-book",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Evidence-linked engineering handovers from Git history and PR discussions. Local CLI, ownership signals, and questions for the next maintainer.",
   "type": "module",
   "license": "MIT",
