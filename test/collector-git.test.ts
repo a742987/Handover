@@ -20,12 +20,19 @@ async function commitFile(
   file: string,
   content: string,
   message: string,
+  at?: string,
 ): Promise<void> {
   const target = path.join(dir, file);
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, content, 'utf8');
   await gitIn(dir, ['add', '--', file]);
-  await gitIn(dir, ['-c', `user.name=${name}`, '-c', `user.email=${email}`, 'commit', '-q', '-m', message]);
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_AUTHOR_NAME: name, GIT_AUTHOR_EMAIL: email, GIT_COMMITTER_NAME: name, GIT_COMMITTER_EMAIL: email };
+  if (at) {
+    // deterministic timestamps: same-second commits tie-break nondeterministically
+    env.GIT_AUTHOR_DATE = at;
+    env.GIT_COMMITTER_DATE = at;
+  }
+  await execFileAsync('git', ['-C', dir, 'commit', '-q', '-m', message], { env });
 }
 
 const tempDirs: string[] = [];
@@ -63,9 +70,9 @@ describe('resolveNumstatPath', () => {
 describe('GitDirectoryCollector', () => {
   it('indexes commits, classifies the subject and the team', async () => {
     const dir = await makeRepo();
-    await commitFile(dir, ALICE.name, ALICE.email, 'payments/charge.ts', 'export const a = 1;\n', 'settle idempotently');
-    await commitFile(dir, ALICE.name, ALICE.email, 'payments/charge.ts', 'export const a = 1;\nexport const b = 2;\n', 'add refund guard');
-    await commitFile(dir, BOB.name, BOB.email, 'docs/runbook.md', '# runbook\n', 'document deploy');
+    await commitFile(dir, ALICE.name, ALICE.email, 'payments/charge.ts', 'export const a = 1;\n', 'settle idempotently', '2026-09-01T00:00:00Z');
+    await commitFile(dir, ALICE.name, ALICE.email, 'payments/charge.ts', 'export const a = 1;\nexport const b = 2;\n', 'add refund guard', '2026-09-02T00:00:00Z');
+    await commitFile(dir, BOB.name, BOB.email, 'docs/runbook.md', '# runbook\n', 'document deploy', '2026-09-03T00:00:00Z');
 
     const store = HandoverStore.inMemory();
     const collector = new GitDirectoryCollector();
