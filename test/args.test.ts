@@ -41,6 +41,11 @@ describe('parseUsername', () => {
     expect(parseUsername('0-abc-x')).toBe('0-abc-x');
   });
 
+  it('normalizes to lowercase (GitHub logins are case-insensitive)', () => {
+    expect(parseUsername('Alice-CAN')).toBe('alice-can');
+    expect(parseUsername('Octocat')).toBe('octocat');
+  });
+
   it('rejects path traversal, separators and over-long names', () => {
     for (const bad of ['../../etc', 'a/b', 'a:b', '-lead', 'trail-', '_under', 'a'.repeat(40), '']) {
       expect(() => parseUsername(bad)).toThrow(InvalidArgumentError);

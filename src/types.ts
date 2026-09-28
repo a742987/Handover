@@ -86,6 +86,14 @@ export interface PullRequestRecord {
 /** A module is the top-level directory of a changed file; root files form the "(root)" module. */
 export type ModuleName = string;
 
+/** A first-person answer captured from the departing engineer (handover capture). */
+export interface CapturedAnswer {
+  id: number;
+  question: string;
+  answer: string;
+  capturedAt: string;
+}
+
 export type EvidenceKind = 'commit' | 'pr' | 'review' | 'issue' | 'comment';
 
 export interface EvidenceRef {
@@ -137,4 +145,6 @@ export interface HandoverBook {
   /** set when any chapter was LLM-synthesized — the rendered privacy note depends on it */
   llmProvider?: string;
   llmModel?: string;
+  /** true when secret-format scrubbing was applied to the digest and the rendered book */
+  redacted?: boolean;
 }

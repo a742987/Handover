@@ -36,6 +36,9 @@ npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
 npm run dev -- gen <username> --repo owner/name
+
+# or with no token at all — read the person's local clones directly:
+npm run dev -- gen <username> --git-dir ~/work/api --git-dir ~/work/web
 ```
 
 Output lands in `handover-data/`:
@@ -48,11 +51,15 @@ Output lands in `handover-data/`:
 | Command | What it does |
 |---|---|
 | `gen <username> -r owner/name` | collect → analyze → render the full book |
-| `collect <username> -r owner/name` | index GitHub history only (commits, PRs, reviews and issues already in the index are skipped) |
-| `risk <username>` | print the Risk Top 5 from the local index |
+| `gen <username> -d ~/clone/dir` | same, but from **local git clones** — no token, no network, works for GitLab/Gitee too |
+| `collect <username> -r owner/name [-d dir]` | index history only (already-indexed commits, PRs, reviews and issues are skipped) |
+| `capture <username>` | sit down with the departing engineer and record their own answers; they are bound into chapter 6 (`--answers q.json` for agents and scripts) |
+| `risk <username> [--json]` | print the Risk Top 5 from the local index |
+| `bus-factor <username>` | team view: which modules only one person commits to, merged with CODEOWNERS when the repo has one |
+| `gate <username> --files changed.txt` | CI check: does this change set touch sole-owned modules? (`--comment`, `--fail-on-match`; see [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
 | `render <username>` | re-render the book from the index without GitHub access (chapters 4-6 call the LLM provider only if an API key is set; pass `-r` to override the repositories recorded in the index) |
 
-Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed).
+Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed), `--html` (also write a print-ready single-file HTML twin — browser print gives you the PDF), `--redact` (scrub known secret formats from the LLM digest and the book; also `HANDOVER_REDACT=1`).
 
 ### LLM providers
 
@@ -80,16 +87,16 @@ Every Risk Top 5 item lists the exact commits, reviews, and issues that justify 
 ```
 ┌──────────────┐   ┌───────────────┐   ┌──────────────┐   ┌───────────────┐
 │  Collect     │ → │  Distill      │ → │  Risk Engine │ → │  Render       │
-│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown book│
-│  (Octokit)   │   │  topic clusters│  │  change freq │   │  (PDF/HTML:   │
-│              │   │  Q&A extraction│  │  incidents   │   │   on roadmap) │
+│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown +   │
+│  (Octokit)   │   │  topic clusters│  │  change freq │   │  print-ready  │
+│  Local git   │   │  Q&A capture  │  │  incidents   │   │  HTML book    │
 └──────────────┘   └───────────────┘   └──────────────┘   └───────────────┘
           └────────── SQLite index (one file per person, cacheable) ─────────┘
 ```
 
 ## Editor plugins
 
-The same CLI drives three integrations. The common layer is a **built-in MCP server** (`handover-mcp`, ships in the npm package) that exposes `handover_generate`, `handover_collect`, `handover_risk`, and `handover_render` as tools — any MCP client can use it without shelling out to the CLI.
+The same CLI drives three integrations. The common layer is a **built-in MCP server** (`handover-mcp`, ships in the npm package) that exposes `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (read-only evidence lookup for follow-up questions), and `handover_render` as tools — any MCP client can use it without shelling out to the CLI.
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -117,7 +124,7 @@ The plugin registers the `handover` MCP server automatically (via the `mcpServer
    ```
 2. Copy [`codex/handover.md`](codex/handover.md) to `~/.codex/prompts/handover.md`, then run `/handover <username> --repo owner/name`.
 
-**Any other MCP client** (Cursor, ZCode, …) — register `handover-mcp` as a stdio server; same four tools everywhere.
+**Any other MCP client** (Cursor, ZCode, …) — register `handover-mcp` as a stdio server; same six tools everywhere.
 
 ## Privacy and ethics — read this before you run it for someone
 
@@ -125,6 +132,7 @@ The plugin registers the `handover` MCP server automatically (via the `mcpServer
 - **Local-first.** Collection, indexing, and rendering all run on your machine. The only network calls are to GitHub's API and your configured LLM provider. Choose **Ollama** and not a single byte of repository content reaches any third party.
 - **The index is sensitive.** `handover-data/*.db` contains your team's full commit history. It is gitignored by default; treat the file like a credential.
 - **Hallucination is a bug, not a quirk.** LLM output must cite evidence refs; unsupported claims must be labelled *(inference)*. Don't trust a chapter you haven't spot-checked against its evidence chain.
+- **Secret scrubbing.** `--redact` / `HANDOVER_REDACT=1` strips known secret formats (GitHub/AWS/Slack/GitLab tokens, `key: value` assignments, private key blocks) before anything reaches an LLM and from the rendered book — best effort, not a guarantee.
 - **Anonymization** (real names → role codes, for HR contexts) is on the roadmap before any team/enterprise tier ships.
 
 ## Development
@@ -142,9 +150,13 @@ Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM p
 
 - [x] Repo scaffold: CLI + Octokit collection + SQLite index + risk engine + Markdown book
 - [x] MCP server (`handover-mcp`) + Claude Code plugin + Codex prompt
+- [x] Local git clone collection (`--git-dir`) — no token, no network
+- [x] `handover capture` — first-person Q&A bound into chapter 6 (CLI + MCP)
+- [x] `handover bus-factor` — team view with CODEOWNERS merge
+- [x] Print-ready single-file HTML twin (`--html`; browser print → PDF)
+- [x] CI integration — `risk --json`, `gate` command + example workflow
+- [x] `handover_search` MCP tool + `--redact` secret scrubbing
 - [ ] `npx handover-book gen` end-to-end on a real public repo (MVP, weeks 1–3)
-- [ ] PDF / HTML output and the page-turn demo
-- [ ] 30-Day Path + Letter to the Future with LLM style-transfer polish (v0.2)
 - [ ] Local web reader with evidence deep links (v0.2)
 - [ ] Org-wide capability risk map (v1.0)
 

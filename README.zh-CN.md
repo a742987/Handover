@@ -36,6 +36,9 @@ npm install
 
 export GITHUB_TOKEN=ghp_...          # repo scope for private repos
 npm run dev -- gen <username> --repo owner/name
+
+# 或者完全不用 token —— 直接读本人的本地克隆：
+npm run dev -- gen <username> --git-dir ~/work/api --git-dir ~/work/web
 ```
 
 输出位于 `handover-data/`：
@@ -48,11 +51,15 @@ npm run dev -- gen <username> --repo owner/name
 | 命令 | 作用 |
 |---|---|
 | `gen <username> -r owner/name` | 采集 → 分析 → 渲染出完整手册 |
-| `collect <username> -r owner/name` | 仅索引 GitHub 历史（索引中已有的 commit、PR、review 和 issue 会被跳过） |
-| `risk <username>` | 从本地索引打印风险 Top 5 |
+| `gen <username> -d ~/clone/dir` | 同样流程，但直接读**本地 git 克隆** —— 无需 token、无需联网，GitLab/Gitee 也能用 |
+| `collect <username> -r owner/name [-d dir]` | 仅索引历史（索引中已有的 commit、PR、review 和 issue 会被跳过） |
+| `capture <username>` | 与离职工程师本人对谈，把 TA 的第一人称回答装订进第 6 章（`--answers q.json` 供 agent/脚本非交互使用） |
+| `risk <username> [--json]` | 从本地索引打印风险 Top 5 |
+| `bus-factor <username>` | 团队视角：哪些模块只有一个人在提交，并在仓库带 CODEOWNERS 时合并之 |
+| `gate <username> --files changed.txt` | CI 检查：这组变更是否触碰了独占模块？（`--comment`、`--fail-on-match`；示例见 [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)） |
 | `render <username>` | 从索引重新渲染手册，不访问 GitHub（第 4-6 章仅在配置了 API 密钥时才调用 LLM 提供方；可用 `-r` 覆盖索引中记录的仓库） |
 
-常用参数：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`、`--data-dir <dir>`、`--refresh`（重新抓取已索引的内容）。
+常用参数：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`、`--data-dir <dir>`、`--refresh`（重新抓取已索引的内容）、`--html`（同时输出可直接打印的单文件 HTML —— 浏览器打印即得 PDF）、`--redact`（在送入 LLM 摘要和成书前清除已知密钥格式；也可用 `HANDOVER_REDACT=1`）。
 
 ### LLM 提供方
 
@@ -80,16 +87,16 @@ risk = sole_contribution_ratio
 ```
 ┌──────────────┐   ┌───────────────┐   ┌──────────────┐   ┌───────────────┐
 │  Collect     │ → │  Distill      │ → │  Risk Engine │ → │  Render       │
-│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown book│
-│  (Octokit)   │   │  topic clusters│  │  change freq │   │  (PDF/HTML:   │
-│              │   │  Q&A extraction│  │  incidents   │   │   on roadmap) │
+│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown +   │
+│  (Octokit)   │   │  topic clusters│  │  change freq │   │  可打印 HTML  │
+│  Local git   │   │  Q&A capture  │   │  incidents   │   │  装订成册的书 │
 └──────────────┘   └───────────────┘   └──────────────┘   └───────────────┘
           └────────── SQLite index (one file per person, cacheable) ─────────┘
 ```
 
 ## 编辑器插件
 
-同一个 CLI 驱动三套集成。公共层是一个**内置 MCP 服务器**（`handover-mcp`，随 npm 包一起发布），它把 `handover_generate`、`handover_collect`、`handover_risk` 和 `handover_render` 暴露为工具 —— 任何 MCP 客户端都可以直接使用，无需调用 CLI。
+同一个 CLI 驱动三套集成。公共层是一个**内置 MCP 服务器**（`handover-mcp`，随 npm 包一起发布），它把 `handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（只读证据检索，用于回答追问）和 `handover_render` 暴露为工具 —— 任何 MCP 客户端都可以直接使用，无需调用 CLI。
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -117,7 +124,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
    ```
 2. 把 [`codex/handover.md`](codex/handover.md) 复制到 `~/.codex/prompts/handover.md`，然后运行 `/handover <username> --repo owner/name`。
 
-**其他任何 MCP 客户端**（Cursor、ZCode 等）—— 把 `handover-mcp` 注册为 stdio 服务器即可；到处都是同样的四个工具。
+**其他任何 MCP 客户端**（Cursor、ZCode 等）—— 把 `handover-mcp` 注册为 stdio 服务器即可；到处都是同样的六个工具。
 
 ## 隐私与伦理 —— 在为别人运行之前请先读这一节
 
@@ -125,6 +132,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 - **本地优先。** 采集、索引和渲染全部在你的机器上运行。仅有的网络调用是发往 GitHub API 和你配置的 LLM 提供方。选择 **Ollama**，仓库内容将连一个字节都不会到达任何第三方。
 - **索引文件是敏感的。** `handover-data/*.db` 包含你们团队的完整 commit 历史。它默认已被 gitignore；请像对待凭据一样对待这个文件。
 - **幻觉是 bug，不是小毛病。** LLM 输出必须引用证据引用（evidence refs）；无依据的说法必须标注 *(inference)*。别相信任何你还没有对照证据链抽查过的章节。
+- **密钥清洗。** `--redact` / `HANDOVER_REDACT=1` 会在内容送入 LLM 之前以及成书时清除已知密钥格式（GitHub/AWS/Slack/GitLab token、`key: value` 赋值、私钥块）——尽力而为，并非保证。
 - **匿名化**（真实姓名 → 角色代号，用于 HR 场景）已列入路线图，将在任何团队/企业版发布之前完成。
 
 ## 开发
@@ -142,9 +150,13 @@ npm run dev -- ...  # run the CLI from source
 
 - [x] 仓库脚手架：CLI + Octokit 采集 + SQLite 索引 + 风险引擎 + Markdown 手册
 - [x] MCP 服务器（`handover-mcp`）+ Claude Code 插件 + Codex prompt
+- [x] 本地 git 克隆采集（`--git-dir`）—— 无需 token、无需联网
+- [x] `handover capture` —— 第一人称问答装订进第 6 章（CLI + MCP）
+- [x] `handover bus-factor` —— 团队视角，合并 CODEOWNERS
+- [x] 可打印单文件 HTML 双胞胎（`--html`；浏览器打印即得 PDF）
+- [x] CI 集成 —— `risk --json`、`gate` 命令 + 示例工作流
+- [x] `handover_search` MCP 工具 + `--redact` 密钥清洗
 - [ ] 在一个真实的公开仓库上端到端跑通 `npx handover-book gen`（MVP，第 1–3 周）
-- [ ] PDF / HTML 输出与翻页演示
-- [ ] 30 天上手路径 + 写给未来的信，加入 LLM 风格迁移润色（v0.2）
 - [ ] 带证据深层链接的本地 web 阅读器（v0.2）
 - [ ] 组织级能力风险地图（v1.0）
 

@@ -24,17 +24,21 @@ Prefer the `handover` MCP tools (registered by the plugin); they keep progress o
 
 | Task | MCP tool | CLI |
 |---|---|---|
-| Full pipeline | `handover_generate` | `handover gen <username> -r owner/name` |
+| Full pipeline | `handover_generate` | `handover gen <username> -r owner/name` (or `-d <clone dir>` — local git, no token) |
 | Index only, no book | `handover_collect` | `handover collect <username> -r owner/name` |
 | Risk Top 5 from index | `handover_risk` | `handover risk <username>` |
+| Capture the person's own answers (chapter 6) | `handover_capture` | `handover capture <username>` |
+| Search the evidence (no network) | `handover_search` | — |
 | Re-render book from index | `handover_render` | `handover render <username>` |
 
 Key parameters:
 
-- `repos` — required for generate/collect, one or more `owner/name` strings. Ask the user if unclear; never guess repo names.
+- `repos` — `owner/name` strings for generate/collect; may be empty when `gitDirs` is set. Ask the user if unclear; never guess repo names.
+- `gitDirs` — local clone directories; no token or network needed. `authorIdentity` optionally overrides which git author name/email marks the departing engineer locally.
 - `since` — optional ISO date to bound the collection window (e.g. `2024-01-01`).
 - `dataDir` — optional; defaults to `handover-data/` under the current working directory.
 - `provider`/`model` — optional LLM override for chapters 4–6.
+- `redact` — scrub known secret formats from the LLM digest and the book; `html` — also emit a print-ready HTML twin.
 
 Environment: `GITHUB_TOKEN` must be set for anything that touches the network. Indexing is incremental — a second run for the same person only fetches what is new, so prefer re-running `handover_generate` over `--refresh`.
 

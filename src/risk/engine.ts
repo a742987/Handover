@@ -1,3 +1,4 @@
+import { sameLogin } from '../identity.js';
 import type { EvidenceRef, RiskFactor, RiskItem } from '../types.js';
 import type { HandoverStore } from '../store/sqlite.js';
 
@@ -99,7 +100,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     }
     const authoredAtMs = Date.parse(commit.authoredAt);
     const isRecent = Number.isFinite(authoredAtMs) && authoredAtMs >= windowStartMs;
-    const isUser = commit.authorLogin === username;
+    const isUser = sameLogin(commit.authorLogin, username);
     // Exclude 'unknown' authors from total: they are unattributed commits (e.g. email
     // patches, migrations) and would otherwise dilute sole-contribution ratios.
     const isKnownAuthor = commit.authorLogin !== 'unknown';
@@ -147,7 +148,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     for (const key of touchedModules) {
       const module = acc(key);
       module.reviewTotal += 1;
-      if (review.reviewerLogin === username) {
+      if (sameLogin(review.reviewerLogin, username)) {
         module.userReviews += 1;
         module.exampleReview = { prNumber: review.prNumber, id: review.id };
       }
@@ -179,8 +180,13 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     };
 
     const evidence: EvidenceRef[] = [];
-    // module keys are "owner/name:module" — the repo prefix builds deep links
+    // module keys are "owner/name:module" — the repo prefix builds deep links.
+    // Repos without the owner/name shape come from local git collection and
+    // have no GitHub URL; their evidence stays link-less rather than broken.
     const repoSlug = module.key.slice(0, module.key.indexOf(':')) || module.key;
+    const isGitHubRepo = /^[^/]+\/[^/]+$/.test(repoSlug);
+    const githubUrl = (suffix: string): string | undefined =>
+      isGitHubRepo ? `https://github.com/${repoSlug}${suffix}` : undefined;
     const recentCommits = [...module.userCommits]
       .sort((a, b) => b.authoredAt.localeCompare(a.authoredAt))
       .slice(0, 3);
@@ -188,7 +194,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
       evidence.push({
         kind: 'commit',
         ref: commit.sha.slice(0, 7),
-        url: `https://github.com/${repoSlug}/commit/${commit.sha}`,
+        url: githubUrl(`/commit/${commit.sha}`),
         excerpt: firstLine(commit.message),
       });
     }
@@ -196,7 +202,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
       evidence.push({
         kind: 'review',
         ref: `#${module.exampleReview.prNumber} review:${module.exampleReview.id}`,
-        url: `https://github.com/${repoSlug}/pull/${module.exampleReview.prNumber}#pullrequestreview-${module.exampleReview.id}`,
+        url: githubUrl(`/pull/${module.exampleReview.prNumber}#pullrequestreview-${module.exampleReview.id}`),
         excerpt: `all ${module.reviewTotal} reviews on this module's PRs were by @${username}`,
       });
     }
@@ -204,7 +210,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
       evidence.push({
         kind: 'issue',
         ref: `#${issueNumber}`,
-        url: `https://github.com/${repoSlug}/issues/${issueNumber}`,
+        url: githubUrl(`/issues/${issueNumber}`),
         excerpt: 'bug-labelled issue referenced from this module',
       });
     }

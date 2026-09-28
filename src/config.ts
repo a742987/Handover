@@ -7,6 +7,8 @@ export interface HandoverConfig {
   ollamaUrl: string;
   /** directory holding the per-person SQLite index and the generated book */
   dataDir: string;
+  /** scrub known secret formats from the LLM digest and the rendered book */
+  redact: boolean;
 }
 
 export const DEFAULT_MODELS: Record<LlmProviderName, string> = {
@@ -34,5 +36,6 @@ export function loadConfig(overrides: Partial<HandoverConfig> = {}): HandoverCon
     model: overrides.model ?? env('HANDOVER_MODEL') ?? DEFAULT_MODELS[provider],
     ollamaUrl: overrides.ollamaUrl ?? env('OLLAMA_URL') ?? 'http://localhost:11434',
     dataDir: overrides.dataDir ?? env('HANDOVER_DATA_DIR') ?? 'handover-data',
+    redact: overrides.redact ?? /^(1|true|yes)$/i.test(env('HANDOVER_REDACT') ?? ''),
   };
 }

@@ -1,5 +1,8 @@
+import { sameLogin } from '../identity.js';
 import type { BookChapter, ChapterId, RiskItem } from '../types.js';
 import type { HandoverStore } from '../store/sqlite.js';
+import { escapeMarkdown } from '../render/escape.js';
+import { redact } from '../render/redact.js';
 import { computeRisk, moduleOf } from '../risk/engine.js';
 import type { LlmProvider } from './llm.js';
 
@@ -17,6 +20,8 @@ export interface SynthesisInput {
   repos: string[];
   store: HandoverStore;
   risks: RiskItem[];
+  /** scrub secret formats from the digest before anything reaches an LLM */
+  redact?: boolean;
   onProgress?: (message: string) => void;
 }
 
@@ -38,11 +43,6 @@ interface ModuleStat {
   lastTouchedAt: string;
 }
 
-/** Escape markdown special characters in untrusted user-generated content. */
-function escapeMarkdown(text: string): string {
-  return text.replace(/([\\`*_{}[\]()#+\-.!|])/g, '\\$1').replace(/\n/g, ' ');
-}
-
 function computeModuleStats(store: HandoverStore, username: string): ModuleStat[] {
   const stats = new Map<string, ModuleStat>();
   for (const commit of store.allCommits()) {
@@ -62,7 +62,7 @@ function computeModuleStats(store: HandoverStore, username: string): ModuleStat[
       if (commit.authoredAt > stat.lastTouchedAt) {
         stat.lastTouchedAt = commit.authoredAt;
       }
-      if (commit.authorLogin === username) {
+      if (sameLogin(commit.authorLogin, username)) {
         stat.byUser += 1;
       }
     }
@@ -84,7 +84,7 @@ export function buildDigest(input: SynthesisInput, charBudget = 60_000): string 
   parts.push(`\n## Pull requests authored by @${username} (most recent first)`);
   const prs = store
     .allPullRequests()
-    .filter((pr) => pr.authorLogin === username)
+    .filter((pr) => sameLogin(pr.authorLogin, username))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
     .slice(0, 30);
   if (prs.length === 0) {
@@ -97,7 +97,7 @@ export function buildDigest(input: SynthesisInput, charBudget = 60_000): string 
   parts.push(`\n## Reviews by @${username} (with inline comments)`);
   const reviews = store
     .allReviews()
-    .filter((review) => review.reviewerLogin === username)
+    .filter((review) => sameLogin(review.reviewerLogin, username))
     .slice(-30);
   if (reviews.length === 0) {
     parts.push('- (none found)');
@@ -113,7 +113,7 @@ export function buildDigest(input: SynthesisInput, charBudget = 60_000): string 
   const comments = store
     .allIssues()
     .flatMap((issue) => issue.comments.map((comment) => ({ issue, comment })))
-    .filter(({ comment }) => comment.authorLogin === username)
+    .filter(({ comment }) => sameLogin(comment.authorLogin, username))
     .slice(-40);
   if (comments.length === 0) {
     parts.push('- (none found)');
@@ -128,7 +128,10 @@ export function buildDigest(input: SynthesisInput, charBudget = 60_000): string 
     parts.push(`- ${risk.rank}. ${risk.module} — score ${risk.score.toFixed(3)}; ${risk.rationale}`);
   }
 
-  const digest = parts.join('\n');
+  let digest = parts.join('\n');
+  if (input.redact) {
+    digest = redact(digest);
+  }
   if (digest.length > charBudget) {
     return `${digest.slice(0, charBudget)}\n\n(digest truncated at ${charBudget} characters — narrow the collection window with --since if chapters look thin)`;
   }
@@ -259,7 +262,7 @@ function riskChapter(risks: RiskItem[]): BookChapter {
 function decisionFallback(input: SynthesisInput): BookChapter {
   const prs = input.store
     .allPullRequests()
-    .filter((pr) => pr.authorLogin === input.username)
+    .filter((pr) => sameLogin(pr.authorLogin, input.username))
     .sort((a, b) => b.body.length - a.body.length)
     .slice(0, 10);
   const lines: string[] = [
@@ -284,14 +287,19 @@ function pathFallback(input: SynthesisInput): BookChapter {
   return { id: 5, title: CHAPTER_TITLES[5], content: lines.join('\n'), evidence: [], generatedBy: 'deterministic' };
 }
 
+const CAPTURE_QUESTIONS = [
+  'Which module would you fix first if you had one more week, and why?',
+  'Which piece of the system looks wrong but must not be "fixed" — and what broke the last time someone tried?',
+  'Which deploy/migration quirk is load-bearing?',
+  'Who outside the team do you call when X breaks?',
+  'What did you promise product/ops that was never written down?',
+];
+
+/** The standing question set `handover capture` walks through. */
+export const QUESTIONS: readonly string[] = CAPTURE_QUESTIONS;
+
 function letterFallback(input: SynthesisInput): BookChapter {
-  const questions = [
-    'Which module would you fix first if you had one more week, and why?',
-    'Which piece of the system looks wrong but must not be "fixed" — and what broke the last time someone tried?',
-    'Which deploy/migration quirk is load-bearing?',
-    'Who outside the team do you call when X breaks?',
-    'What did you promise product/ops that was never written down?',
-  ];
+  const questions = CAPTURE_QUESTIONS;
   const lines: string[] = [
     'LLM style-transfer was unavailable; these are the questions the successor should ask @' + input.username + ' before the last day.',
     '',
@@ -301,6 +309,30 @@ function letterFallback(input: SynthesisInput): BookChapter {
     lines.push('   - (answer to be captured)');
   });
   return { id: 6, title: CHAPTER_TITLES[6], content: lines.join('\n'), evidence: [], generatedBy: 'deterministic' };
+}
+
+/** Section of first-person answers captured with `handover capture`; empty string when none. */
+export function renderRecordedAnswers(username: string, answers: { question: string; answer: string; capturedAt: string }[]): string {
+  if (answers.length === 0) {
+    return '';
+  }
+  const lines: string[] = [
+    `### Recorded answers from @${username}`,
+    '',
+    'Captured in the departing engineer’s own words with `handover capture` — the only first-person material in this book.',
+    '',
+  ];
+  answers.forEach((entry, index) => {
+    lines.push(`${index + 1}. **${escapeMarkdown(entry.question)}**`);
+    for (const paragraph of entry.answer.split(/\n{2,}/)) {
+      const flat = paragraph.trim();
+      if (flat) {
+        lines.push('', `> ${flat.replace(/\n/g, '\n> ')}`);
+      }
+    }
+    lines.push('', `   — captured ${entry.capturedAt.slice(0, 10)}`);
+  });
+  return lines.join('\n');
 }
 
 function decisionInstruction(username: string): string {
@@ -342,6 +374,15 @@ export async function synthesizeChapters(
         `  LLM synthesis of "${CHAPTER_TITLES[task.id]}" failed (${error instanceof Error ? error.message : String(error)}); using deterministic fallback.`,
       );
       chapters.push(task.fallback());
+    }
+  }
+
+  // First-person captured answers belong in chapter 6, whoever wrote it.
+  const answers = renderRecordedAnswers(input.username, input.store.listAnswers());
+  if (answers) {
+    const letter = chapters.find((chapter) => chapter.id === 6);
+    if (letter) {
+      letter.content = `${letter.content.trim()}\n\n${answers}`;
     }
   }
 

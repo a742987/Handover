@@ -60,6 +60,10 @@ interface Comment {
 }
 
 interface FakeData {
+  /** GitHub-side canonical login returned by users.getByUsername (defaults to USERNAME) */
+  login?: string;
+  /** served at path "CODEOWNERS"; other paths 404 */
+  codeowners?: string;
   commits?: CommitListItem[];
   commitListError?: { status: number };
   pullRequests?: PullRequestListItem[];
@@ -89,6 +93,12 @@ function fakeOctokit(data: FakeData, calls: { getCommit: number }): unknown {
       getCommit: async ({ ref }: { ref: string }) => {
         calls.getCommit += 1;
         return commitDetail(data.commits?.find((commit) => commit.sha === ref) ?? { sha: ref });
+      },
+      getContent: async ({ path: filePath }: { path: string }) => {
+        if (filePath === 'CODEOWNERS' && data.codeowners !== undefined) {
+          return { data: { content: Buffer.from(data.codeowners, 'utf8').toString('base64'), encoding: 'base64' } };
+        }
+        throw Object.assign(new Error('Not Found'), { status: 404 });
       },
     },
     pulls: {
@@ -144,7 +154,7 @@ function fakeOctokit(data: FakeData, calls: { getCommit: number }): unknown {
 
   return {
     users: {
-      getByUsername: async () => ({ data: { login: USERNAME } }),
+      getByUsername: async () => ({ data: { login: data.login ?? USERNAME } }),
     },
     rest,
     paginate,
@@ -165,6 +175,27 @@ async function collect(data: FakeData, options: { since?: string; refresh?: bool
 }
 
 describe('GitHubCollector', () => {
+  it('returns the GitHub-side canonical login and records it in meta', async () => {
+    const store = HandoverStore.inMemory();
+    const collector = new GitHubCollector('test-token', fakeOctokit({ login: 'Alice-Real' }, { getCommit: 0 }) as unknown as Octokit);
+    const result = await collector.collectInto(store, 'alice-real', [FULL_NAME], {});
+    expect(result.login).toBe('Alice-Real');
+    expect(store.getMeta('collected_for')).toBe('Alice-Real');
+  });
+
+  it('deduplicates the requested repository list', async () => {
+    const store = HandoverStore.inMemory();
+    const calls = { getCommit: 0 };
+    const collector = new GitHubCollector('test-token', fakeOctokit({ commits: [] }, calls) as unknown as Octokit);
+    await collector.collectInto(store, USERNAME, [FULL_NAME, FULL_NAME, 'other/repo'], {});
+    expect(store.getMeta('repos')).toBe(`${FULL_NAME},other/repo`);
+  });
+
+  it('stores repo CODEOWNERS text for the bus-factor view', async () => {
+    const { store } = await collect({ commits: [], codeowners: '* @acme/platform\n/payments/ @alice @bob\n' });
+    expect(store.getMeta('codeowners:acme/api')).toContain('/payments/');
+  });
+
   it('indexes commits with their files', async () => {
     const { store, result, calls } = await collect({
       commits: [{ sha: 'a'.repeat(40), author: { login: USERNAME }, commit: { author: { date: '2026-09-01T00:00:00Z' }, message: 'fix crash (#101)' } }],

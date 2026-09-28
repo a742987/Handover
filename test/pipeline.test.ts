@@ -44,6 +44,19 @@ async function seedIndex(dataDir: string): Promise<void> {
   }
 }
 
+async function seedIndexWithSecret(dataDir: string): Promise<void> {
+  const store = new HandoverStore(path.join(dataDir, `${USERNAME}.db`));
+  try {
+    store.upsertCommit({
+      ...commit('s'.padEnd(40, '0'), USERNAME, '2026-09-01T00:00:00Z'),
+      message: 'rotate api_key: SUPERLEAKED123456 today',
+    });
+    store.setMeta('repos', REPO);
+  } finally {
+    store.close();
+  }
+}
+
 afterEach(async () => {
   vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -81,5 +94,24 @@ describe('renderHandoverBook', () => {
     expect(markdown).toContain(`# Handover Book — @${USERNAME}`);
     expect(markdown).toContain('nothing was uploaded anywhere');
     expect(markdown).toContain('payments');
+  });
+
+  it('scrubs secrets from the book and writes the HTML twin when asked', async () => {
+    vi.stubEnv('OPENAI_API_KEY', '');
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const dataDir = await makeDataDir();
+    await seedIndexWithSecret(dataDir);
+
+    const result = await renderHandoverBook({ username: USERNAME, dataDir, redact: true, html: true, onProgress: () => {} });
+
+    const markdown = await readFile(result.bookPath, 'utf8');
+    expect(markdown).not.toContain('SUPERLEAKED123456');
+    expect(markdown).toContain('[REDACTED]');
+    expect(markdown).toContain('**Redaction:**');
+
+    expect(result.htmlPath).toBeDefined();
+    const html = await readFile(result.htmlPath!, 'utf8');
+    expect(html).toContain('<!doctype html>');
+    expect(html).not.toContain('SUPERLEAKED123456');
   });
 });

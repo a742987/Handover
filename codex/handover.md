@@ -7,16 +7,22 @@ Handover turns a departing engineer's GitHub history into a bound, evidence-link
 If an MCP server named `handover` is available in this session, use its tools:
 
 - `handover_generate` — full pipeline (collect → risk → render the book)
-- `handover_collect` — index GitHub history only, without rendering
+- `handover_collect` — index history only, without rendering
 - `handover_risk` — Risk Top 5 from an existing index
+- `handover_capture` — append the departing engineer's own Q&A answers (chapter 6)
+- `handover_search` — substring search over the local evidence index (no network)
 - `handover_render` — re-render the book from an existing index (no GitHub network; LLM chapters use the configured provider if an API key is available)
 
 Otherwise use the `handover` CLI (install with `npm install -g handover-book` if missing):
 
 ```bash
 handover gen <username> -r owner/name [--since 2024-01-01]   # full pipeline
+handover gen <username> -d ~/work/api                        # local clones only — no token, no network
 handover collect <username> -r owner/name                    # index only, no book
+handover capture <username>                                  # record first-person answers into chapter 6
 handover risk <username>                                     # Risk Top 5 from index
+handover bus-factor <username>                               # team view: sole-owned modules (+CODEOWNERS)
+handover gate <username> --files changed.txt                 # CI check: touched sole-owned modules?
 handover render <username>                                   # re-render, no GitHub network
 ```
 

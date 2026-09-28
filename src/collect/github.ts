@@ -1,4 +1,5 @@
 import { Octokit } from '@octokit/rest';
+import { codeownersMetaKey } from './codeowners.js';
 import type {
   CommentRecord,
   CommitRecord,
@@ -50,6 +51,8 @@ function retryDelayMs(error: unknown, attempt: number): number {
 }
 
 export interface CollectResult {
+  /** GitHub-side canonical login for the collected user (logins are case-insensitive) */
+  login: string;
   indexedCommits: number;
   skippedCommits: number;
   pullRequests: number;
@@ -162,6 +165,7 @@ export class GitHubCollector {
     progress(`GitHub user resolved as @${login}`);
 
     const result: CollectResult = {
+      login,
       indexedCommits: 0,
       skippedCommits: 0,
       pullRequests: 0,
@@ -172,20 +176,25 @@ export class GitHubCollector {
     };
 
     // Clear orphan data from repos not in the current collection scope.
-    store.clearRepositoriesExcept(repos);
+    const scope = [...new Set(repos)];
+    store.clearRepositoriesExcept(scope);
 
-    for (const fullName of repos) {
+    for (const fullName of scope) {
       const { owner, repo } = parseRepoSlug(fullName);
       const name = `${owner}/${repo}`;
       progress(`Collecting ${name} …`);
       await this.collectCommits(store, owner, repo, options, result);
       await this.collectPullRequests(store, owner, repo, options, result);
       await this.collectIssues(store, owner, repo, options, result);
+      const codeowners = await this.fetchCodeowners(owner, repo);
+      if (codeowners !== null) {
+        store.setMeta(codeownersMetaKey(name), codeowners);
+      }
     }
 
     store.setMeta('last_collected_at', new Date().toISOString());
     store.setMeta('collected_for', login);
-    store.setMeta('repos', repos.join(','));
+    store.setMeta('repos', scope.join(','));
     return result;
   }
 
@@ -200,6 +209,26 @@ export class GitHubCollector {
       }
       throw error;
     }
+  }
+
+  /**
+   * Best-effort CODEOWNERS fetch (feeds the bus-factor view): the first of the
+   * three documented locations wins; missing files, 404s and API stubs all
+   * just mean "no ownership metadata for this repo".
+   */
+  private async fetchCodeowners(owner: string, repo: string): Promise<string | null> {
+    for (const candidate of ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS']) {
+      try {
+        const response = await this.octokit.rest.repos.getContent({ owner, repo, path: candidate });
+        const data = response.data as { content?: string; encoding?: string };
+        if (typeof data.content === 'string' && (data.encoding ?? 'base64') === 'base64') {
+          return Buffer.from(data.content, 'base64').toString('utf8');
+        }
+      } catch {
+        // try the next candidate
+      }
+    }
+    return null;
   }
 
   private async *paginate<T>(route: 'listCommits' | 'listPullRequests' | 'listIssues', slug: RepoSlug, since?: string): AsyncGenerator<T> {

@@ -91,6 +91,35 @@ describe('computeRisk', () => {
     }
   });
 
+  it('attributes commits and reviews case-insensitively (GitHub logins are)', () => {
+    const store = HandoverStore.inMemory();
+    for (let i = 0; i < 4; i += 1) {
+      // API returns the canonical case; callers pass the lowercase form
+      store.upsertCommit(commit(`c${i}`.padEnd(40, '0'), 'Alice-CAN', isoDaysAgo(1 + i), 'payments/charge.ts'));
+    }
+    store.upsertPrFiles(REPO, 7, ['payments/charge.ts']);
+    store.upsertReview({
+      id: 21, repo: REPO, prNumber: 7, reviewerLogin: 'Alice-CAN', state: 'APPROVED', submittedAt: isoDaysAgo(1), body: '', comments: [],
+    });
+    const risks = computeRisk(store, 'alice-can', { now: NOW });
+    expect(risks).toHaveLength(1);
+    expect(risks[0]?.factors.soleContributionRatio).toBe(1);
+    expect(risks[0]?.factors.irreplaceability).toBeGreaterThan(1);
+  });
+
+  it('omits GitHub deep links for modules from local-only repositories', () => {
+    const store = HandoverStore.inMemory();
+    for (let i = 0; i < 3; i += 1) {
+      store.upsertCommit({ ...commit(`l${i}`.padEnd(40, '0'), 'alice', isoDaysAgo(1 + i), 'core/main.ts'), repo: 'myproject' });
+    }
+    const risks = computeRisk(store, 'alice', { now: NOW });
+    expect(risks[0]?.module).toBe('myproject:core');
+    expect(risks.length).toBe(1);
+    for (const ref of risks[0]!.evidence) {
+      expect(ref.url).toBeUndefined();
+    }
+  });
+
   it('falls back to lifetime activity when the repo has been quiet inside the window', () => {
     const store = HandoverStore.inMemory();
     for (let i = 0; i < 4; i += 1) {

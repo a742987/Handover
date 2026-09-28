@@ -1,5 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import type {
+  CapturedAnswer,
   CommitFile,
   CommitRecord,
   CommentRecord,
@@ -145,6 +146,15 @@ export class HandoverStore {
         PRIMARY KEY (repo, id)
       );
 
+      -- first-person answers captured from the departing engineer (handover capture);
+      -- they are injected into chapter 6 at render time
+      CREATE TABLE IF NOT EXISTS answers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        question TEXT NOT NULL,
+        answer TEXT NOT NULL,
+        captured_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_review_comments_review_id ON review_comments (repo, review_id);
       CREATE INDEX IF NOT EXISTS idx_issue_comments_issue_number ON issue_comments (repo, issue_number);
       CREATE INDEX IF NOT EXISTS idx_pr_files_pr_number ON pr_files (repo, pr_number);
@@ -169,13 +179,13 @@ export class HandoverStore {
     // schema_version tracks backward-incompatible migrations; a database
     // with a newer version than this code knows must be refused rather than
     // silently corrupted.
-    const VERSION = 2;
+    const VERSION = 3;
     this.run('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)', 'schema_version', String(VERSION));
     const row = this.get('SELECT value FROM meta WHERE key = ?', 'schema_version');
     const current = row ? Number(str(row['value'])) : 0;
     if (!Number.isFinite(current) || current < VERSION) {
-      // forward migration from a strictly older schema: reset and re-collect
-      // the affected rows (safer than guessing at partial migrations).
+      // Older schema: the column ADDs above already brought it forward
+      // in place, so only the recorded version needs updating.
       this.run('UPDATE meta SET value = ? WHERE key = ?', String(VERSION), 'schema_version');
     } else if (current > VERSION) {
       throw new Error(
@@ -368,7 +378,7 @@ export class HandoverStore {
     });
   }
 
-  upsertComments(repo: string, number: number, comments: CommentRecord[]): void {
+  private upsertComments(repo: string, number: number, comments: CommentRecord[]): void {
     const insert = this.db.prepare(
       `INSERT OR REPLACE INTO issue_comments (repo, id, issue_number, author_login, created_at, body)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -440,6 +450,28 @@ export class HandoverStore {
   getMeta(key: string): string | null {
     const row = this.get('SELECT value FROM meta WHERE key = ?', key);
     return row === undefined ? null : str(row['value']);
+  }
+
+  // ---- captured answers ----------------------------------------------------
+
+  addAnswer(question: string, answer: string, capturedAt: string): number {
+    const row = this.db
+      .prepare('INSERT INTO answers (question, answer, captured_at) VALUES (?, ?, ?)')
+      .run(question, answer, capturedAt);
+    return Number(row.lastInsertRowid);
+  }
+
+  listAnswers(): CapturedAnswer[] {
+    return this.all('SELECT id, question, answer, captured_at FROM answers ORDER BY id ASC').map((row) => ({
+      id: num(row['id']),
+      question: str(row['question']),
+      answer: str(row['answer']),
+      capturedAt: str(row['captured_at']),
+    }));
+  }
+
+  deleteAnswer(id: number): void {
+    this.run('DELETE FROM answers WHERE id = ?', id);
   }
 
   // ---- reads --------------------------------------------------------------

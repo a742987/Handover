@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, DEFAULT_MODELS } from '../src/config.js';
 
-const ENV_KEYS = ['GITHUB_TOKEN', 'HANDOVER_PROVIDER', 'HANDOVER_MODEL', 'HANDOVER_DATA_DIR', 'OLLAMA_URL'] as const;
+const ENV_KEYS = ['GITHUB_TOKEN', 'HANDOVER_PROVIDER', 'HANDOVER_MODEL', 'HANDOVER_DATA_DIR', 'HANDOVER_REDACT', 'OLLAMA_URL'] as const;
 
 function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>, run: () => void): void {
   const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -54,6 +54,16 @@ describe('loadConfig', () => {
       expect(config.provider).toBe('ollama');
       expect(config.dataDir).toBe('cli-flag'); // override beats env
       expect(config.model).toBe('llama3.1');
+    });
+  });
+
+  it('reads HANDOVER_REDACT truthy values and lets overrides win', () => {
+    withEnv({ HANDOVER_REDACT: '1' }, () => {
+      expect(loadConfig().redact).toBe(true);
+      expect(loadConfig({ redact: false }).redact).toBe(false);
+    });
+    withEnv({}, () => {
+      expect(loadConfig().redact).toBe(false);
     });
   });
 });

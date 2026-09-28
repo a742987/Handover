@@ -32,10 +32,12 @@ export function parseSince(value: string): string {
 /**
  * GitHub usernames are limited to alphanumerics and hyphens; validating here
  * prevents path traversal (e.g. "../../x") and Windows-invalid characters.
+ * GitHub logins are case-insensitive — normalize so index files, books and
+ * author comparisons all use one canonical form.
  */
 export function parseUsername(value: string): string {
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(value) || value.length > 39) {
     throw new InvalidArgumentError(`Invalid GitHub username "${value}" — must match [A-Za-z0-9-], 1-39 chars.`);
   }
-  return value;
+  return value.toLowerCase();
 }

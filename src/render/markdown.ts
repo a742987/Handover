@@ -1,18 +1,9 @@
 import type { EvidenceRef, HandoverBook } from '../types.js';
 import { CHAPTER_TITLES } from '../distill/synthesize.js';
+import { escapeMarkdown, tableCell } from './escape.js';
 
 function evidenceKey(ref: EvidenceRef): string {
   return `${ref.kind}:${ref.ref}`;
-}
-
-/** Markdown table cells cannot contain unescaped pipes. */
-function tableCell(text: string): string {
-  return text.replace(/\|/g, '\\|');
-}
-
-/** Escape markdown special characters in untrusted user-generated content (PR titles, commit messages). */
-function escapeMarkdown(text: string): string {
-  return text.replace(/([\\`*_{}[\]()#+\-.!|])/g, '\\$1').replace(/\n/g, ' ');
 }
 
 function evidenceLink(ref: EvidenceRef): string {
@@ -33,8 +24,11 @@ export function renderBook(book: HandoverBook): string {
   lines.push(`- **Chapters:** ${book.chapters.length}`);
   lines.push(
     `- **Synthesis:** ${book.chapters.some((chapter) => chapter.generatedBy === 'llm') ? 'LLM + deterministic' : 'deterministic (no LLM key configured)'}`,
-    '',
   );
+  if (book.redacted) {
+    lines.push('- **Redaction:** known secret formats were scrubbed from this rendering (best effort, not a guarantee).');
+  }
+  lines.push('');
   const usedLlm = book.chapters.some((chapter) => chapter.generatedBy === 'llm');
   const provider = `${book.llmProvider ?? 'an external LLM provider'}${book.llmModel ? ` (${book.llmModel})` : ''}`;
   // Privacy claim: if LLM was configured (llmProvider is set), content was sent regardless of whether
