@@ -28,3 +28,7 @@ export { renderBookHtml } from './render/html.js';
 export { redact, REDACTED } from './render/redact.js';
 export { generateHandoverBook, renderHandoverBook } from './pipeline.js';
 export type { GenerateOptions, GenerateResult } from './pipeline.js';
+export { verifyCitations, extractCitations } from './verify.js';
+export type { VerifyReport, VerifyRef, VerifyKind } from './verify.js';
+export { buildCoverage, buildActions } from './report/summary.js';
+export type { BookCoverage, ActionItem } from './types.js';

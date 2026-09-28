@@ -9,6 +9,7 @@ import { parseRepos, parseSince, parseUsername } from './args.js';
 import { sameLogin } from './identity.js';
 import { applyAnswers, parseAnswersJson, runInteractiveCapture } from './capture.js';
 import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
+import { verifyCitations } from './verify.js';
 import { GitHubCollector, countCollected } from './collect/github.js';
 import { GitDirectoryCollector } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
@@ -58,6 +59,7 @@ program
   .option('--refresh', 're-fetch commit details even for already-indexed commits', false)
   .option('--redact', 'scrub known secret formats from the LLM digest and the rendered book (or HANDOVER_REDACT=1)')
   .option('--html', 'also write a print-ready single-file HTML twin of the book')
+  .option('--no-llm', 'skip LLM synthesis even when an API key is configured — chapters 4-6 use deterministic fallbacks and nothing leaves this machine (or HANDOVER_NO_LLM=1)')
   .action(async (username: string, options: {
     repo: string[];
     gitDir?: string[];
@@ -69,6 +71,7 @@ program
     refresh?: boolean;
     redact?: boolean;
     html?: boolean;
+    noLlm?: boolean;
   }) => {
     try {
       const result = await generateHandoverBook({
@@ -83,6 +86,7 @@ program
         refresh: options.refresh,
         redact: options.redact,
         html: options.html,
+        noLlm: options.noLlm,
         onProgress: (message) => console.log(message),
       });
       printRiskTable(result.risks);
@@ -334,7 +338,8 @@ program
   .option('--data-dir <dir>', 'directory holding the SQLite index (default: handover-data, or HANDOVER_DATA_DIR)')
   .option('--redact', 'scrub known secret formats from the LLM digest and the rendered book (or HANDOVER_REDACT=1)')
   .option('--html', 'also write a print-ready single-file HTML twin of the book')
-  .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir?: string; redact?: boolean; html?: boolean }) => {
+  .option('--no-llm', 'skip LLM synthesis even when an API key is configured — chapters 4-6 use deterministic fallbacks (or HANDOVER_NO_LLM=1)')
+  .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir?: string; redact?: boolean; html?: boolean; noLlm?: boolean }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
@@ -346,6 +351,7 @@ program
         model: options.model,
         redact: options.redact,
         html: options.html,
+        noLlm: options.noLlm,
         onProgress: (message) => console.log(message),
       });
       console.log(`\nBook:  ${result.bookPath}`);
@@ -353,6 +359,49 @@ program
         console.log(`HTML:  ${result.htmlPath}`);
       }
       console.log(`Index: ${result.dbPath}`);
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+program
+  .command('verify')
+  .description('check that every evidence ref cited in the rendered book exists in the local index (exit 1 on missing refs)')
+  .argument('<username>', 'GitHub username whose index and book to check', parseUsername)
+  .option('--data-dir <dir>', 'directory holding the SQLite index and the book (default: handover-data, or HANDOVER_DATA_DIR)')
+  .option('--file <path>', 'book file to check (default: <data-dir>/handover-book-<username>.md)')
+  .option('--json', 'machine-readable report for CI')
+  .action(async (username: string, options: { dataDir?: string; file?: string; json?: boolean }) => {
+    try {
+      const config = loadConfig({ dataDir: options.dataDir });
+      await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
+      const file = options.file ?? path.join(config.dataDir, `handover-book-${username}.md`);
+      const markdown = await readFile(file, 'utf8').catch(() => {
+        throw new Error(`book file not found at ${file} — run "handover gen" or "handover render" first, or pass --file <path>.`);
+      });
+      const store = new HandoverStore(path.join(config.dataDir, `${username}.db`));
+      let report;
+      try {
+        report = verifyCitations(store, file, markdown);
+      } finally {
+        store.close();
+      }
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log(`Checked ${report.checked.length} citation(s) against ${report.repos.length} repo(s) in scope.`);
+        if (report.missingCount > 0) {
+          console.error(`\nMissing refs (${report.missingCount}):`);
+          for (const ref of report.checked.filter((item) => !item.ok)) {
+            console.error(`  [${ref.raw}] — not found${ref.repo ? ` in ${ref.repo}` : ` in any of: ${report.repos.join(', ')}`}`);
+          }
+        } else {
+          console.log('All cited evidence refs exist in the index.');
+        }
+      }
+      if (report.missingCount > 0) {
+        process.exitCode = 1;
+      }
     } catch (error) {
       fail(error);
     }

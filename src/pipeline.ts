@@ -9,6 +9,7 @@ import { GitDirectoryCollector, previewLocalRepoKeys } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
 import { synthesizeChapters } from './distill/synthesize.js';
 import { createProvider, type LlmProvider } from './distill/llm.js';
+import { buildActions, buildCoverage, markCollectionSource } from './report/summary.js';
 import { renderBook } from './render/markdown.js';
 import { renderBookHtml } from './render/html.js';
 import { redact } from './render/redact.js';
@@ -31,6 +32,8 @@ export interface GenerateOptions {
   redact?: boolean;
   /** also write a print-ready single-file HTML twin of the book */
   html?: boolean;
+  /** force deterministic synthesis even when an LLM credential is configured (HANDOVER_NO_LLM=1 works too) */
+  noLlm?: boolean;
   onProgress?: (message: string) => void;
 }
 
@@ -53,6 +56,10 @@ function dbPathFor(config: HandoverConfig, username: string): string {
 
 /** Resolve the LLM provider; a missing credential degrades to deterministic synthesis. */
 function tryCreateProvider(config: HandoverConfig, onProgress: (message: string) => void): LlmProvider | null {
+  if (config.noLlm) {
+    onProgress('LLM synthesis disabled (--no-llm / HANDOVER_NO_LLM); chapters 4-6 will use deterministic fallbacks. Nothing leaves this machine.');
+    return null;
+  }
   try {
     return createProvider(config);
   } catch (error) {
@@ -74,6 +81,8 @@ async function finishFromStore(
   const doRedact = flags.redact ?? config.redact;
   onProgress('Computing Risk Top 5 …');
   const risks = computeRisk(store, display);
+  const coverage = buildCoverage(store, [...repos]);
+  const actions = buildActions(risks, display);
 
   const provider = tryCreateProvider(config, onProgress);
   onProgress('Synthesizing chapters …');
@@ -87,6 +96,8 @@ async function finishFromStore(
     llmProvider: provider?.name,
     llmModel: provider?.model,
     redacted: doRedact || undefined,
+    coverage,
+    actions,
   };
   const bookPath = bookPathFor(config, username);
   let markdown = renderBook(book);
@@ -113,6 +124,7 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
     provider: options.provider,
     model: options.model,
     dataDir: options.dataDir,
+    noLlm: options.noLlm,
   });
   const onProgress = options.onProgress ?? (() => {});
   const repos = [...new Set(options.repos)];
@@ -150,6 +162,7 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
       );
       display = collected.login || display;
       collectedTotal += countCollected(collected);
+      markCollectionSource(store, 'github');
     }
 
     if (gitDirs.length > 0) {
@@ -165,6 +178,7 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
       );
       collectedTotal += local.indexedCommits + local.skippedCommits;
       scope.push(...local.repos);
+      markCollectionSource(store, 'local-git');
     }
 
     if (collectedTotal === 0) {
@@ -190,6 +204,7 @@ export async function renderHandoverBook(
     dataDir: options.dataDir,
     provider: options.provider,
     model: options.model,
+    noLlm: options.noLlm,
   });
   const onProgress = options.onProgress ?? (() => {});
   await mkdir(config.dataDir, { recursive: true });

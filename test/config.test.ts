@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadConfig, DEFAULT_MODELS } from '../src/config.js';
 
-const ENV_KEYS = ['GITHUB_TOKEN', 'HANDOVER_PROVIDER', 'HANDOVER_MODEL', 'HANDOVER_DATA_DIR', 'HANDOVER_REDACT', 'OLLAMA_URL'] as const;
+const ENV_KEYS = ['GITHUB_TOKEN', 'HANDOVER_PROVIDER', 'HANDOVER_MODEL', 'HANDOVER_DATA_DIR', 'HANDOVER_REDACT', 'HANDOVER_NO_LLM', 'OLLAMA_URL'] as const;
 
 function withEnv(values: Partial<Record<(typeof ENV_KEYS)[number], string>>, run: () => void): void {
   const saved = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
@@ -64,6 +64,19 @@ describe('loadConfig', () => {
     });
     withEnv({}, () => {
       expect(loadConfig().redact).toBe(false);
+    });
+  });
+
+  it('reads HANDOVER_NO_LLM truthy values and lets overrides win', () => {
+    withEnv({ HANDOVER_NO_LLM: '1' }, () => {
+      expect(loadConfig().noLlm).toBe(true);
+      expect(loadConfig({ noLlm: false }).noLlm).toBe(false);
+    });
+    withEnv({ HANDOVER_NO_LLM: 'no' }, () => {
+      expect(loadConfig().noLlm).toBe(false);
+    });
+    withEnv({}, () => {
+      expect(loadConfig().noLlm).toBe(false);
     });
   });
 });

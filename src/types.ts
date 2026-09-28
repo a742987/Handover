@@ -98,10 +98,16 @@ export type EvidenceKind = 'commit' | 'pr' | 'review' | 'issue' | 'comment';
 
 export interface EvidenceRef {
   kind: EvidenceKind;
-  /** commit sha (short), "#123" for PR/issue, "review:456" for a review */
+  /** commit sha (short), "#123" for PR/issue, "review:456" or "#123 review:456" for a review */
   ref: string;
   url?: string;
   excerpt?: string;
+  /**
+   * owner/name of the repository the ref points into. Optional for backwards
+   * compatibility, but set by the risk engine so multi-repo books can render
+   * unambiguous refs like `owner/name#123`.
+   */
+  repo?: string;
 }
 
 export interface RiskFactor {
@@ -137,6 +143,49 @@ export interface BookChapter {
   generatedBy: 'llm' | 'deterministic';
 }
 
+/** What the collected data covers — rendered on the book's action page so the reader knows the limits up front. */
+export interface BookCoverage {
+  /** repositories in scope, as recorded for this book */
+  repos: string[];
+  /** where the data came from, e.g. "GitHub API", "local git clones" */
+  sources: string[];
+  /** earliest and latest commit author dates in the index (ISO, or null when no commits) */
+  commitWindow: { from: string | null; to: string | null };
+  counts: {
+    commits: number;
+    pullRequests: number;
+    reviews: number;
+    issues: number;
+    /** comments on issues and PRs */
+    comments: number;
+    /** first-person answers recorded with `handover capture` */
+    capturedAnswers: number;
+  };
+  /** distinct, attributed authors seen in the collected commits */
+  contributors: number;
+  /** commits no author could be attributed to (GitHub "unknown", mail patches, …) */
+  unattributedCommits: number;
+  /** human-readable gaps the reader must know before trusting the conclusions */
+  gaps: string[];
+}
+
+/** One "confirm before the handover" entry on the book's action page. */
+export interface ActionItem {
+  /** module key as shown in the risk chapter ("owner/name:module") */
+  module: string;
+  /** observed signal, in one sentence */
+  finding: string;
+  /** the question the successor should have confirmed by the departing engineer */
+  question: string;
+  /** who is expected to confirm */
+  confirmWith: string;
+  /** concrete next step for the successor */
+  nextStep: string;
+  /** what Git history cannot show for this item */
+  limitation: string;
+  evidence: EvidenceRef[];
+}
+
 export interface HandoverBook {
   username: string;
   repos: string[];
@@ -147,4 +196,8 @@ export interface HandoverBook {
   llmModel?: string;
   /** true when secret-format scrubbing was applied to the digest and the rendered book */
   redacted?: boolean;
+  /** data coverage statement for the action page */
+  coverage?: BookCoverage;
+  /** "confirm before the handover" entries for the action page */
+  actions?: ActionItem[];
 }

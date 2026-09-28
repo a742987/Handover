@@ -198,6 +198,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
         ref: commit.sha.slice(0, 7),
         url: githubUrl(`/commit/${commit.sha}`),
         excerpt: firstLine(commit.message),
+        repo: repoSlug,
       });
     }
     if (soleReviewer && module.exampleReview) {
@@ -206,6 +207,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
         ref: `#${module.exampleReview.prNumber} review:${module.exampleReview.id}`,
         url: githubUrl(`/pull/${module.exampleReview.prNumber}#pullrequestreview-${module.exampleReview.id}`),
         excerpt: `all ${module.reviewTotal} reviews on this module's PRs were by @${username}`,
+        repo: repoSlug,
       });
     }
     for (const issueNumber of [...module.bugIssues].slice(0, 2)) {
@@ -214,6 +216,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
         ref: `#${issueNumber}`,
         url: githubUrl(`/issues/${issueNumber}`),
         excerpt: 'bug-labelled issue referenced from this module',
+        repo: repoSlug,
       });
     }
 

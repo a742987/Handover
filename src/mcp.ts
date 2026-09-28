@@ -134,9 +134,13 @@ server.registerTool(
       refresh: z.boolean().optional().describe('re-fetch commit details even for already-indexed commits (default false)'),
       redact: z.boolean().optional().describe('scrub known secret formats from the LLM digest and the rendered book'),
       html: z.boolean().optional().describe('also write a print-ready single-file HTML twin of the book'),
+      noLlm: z
+        .boolean()
+        .optional()
+        .describe('force deterministic chapters 4-6 even when an LLM API key is configured — nothing leaves this machine'),
     },
   },
-  async ({ username, repos, gitDirs, authorIdentity, since, provider, model, dataDir, refresh, redact: redactOn, html }) => {
+  async ({ username, repos, gitDirs, authorIdentity, since, provider, model, dataDir, refresh, redact: redactOn, html, noLlm }) => {
     const progress: string[] = [];
     try {
       const result = await generateHandoverBook({
@@ -151,6 +155,7 @@ server.registerTool(
         refresh,
         redact: redactOn,
         html,
+        noLlm,
         onProgress: (message) => progress.push(message),
       });
       return textResult(
@@ -372,9 +377,13 @@ server.registerTool(
       dataDir: dataDirSchema,
       redact: z.boolean().optional().describe('scrub known secret formats from the LLM digest and the rendered book'),
       html: z.boolean().optional().describe('also write a print-ready single-file HTML twin of the book'),
+      noLlm: z
+        .boolean()
+        .optional()
+        .describe('force deterministic chapters 4-6 even when an LLM API key is configured'),
     },
   },
-  async ({ username, repos, provider, model, dataDir, redact: redactOn, html }) => {
+  async ({ username, repos, provider, model, dataDir, redact: redactOn, html, noLlm }) => {
     const progress: string[] = [];
     try {
       const config = loadConfig({ dataDir });
@@ -387,6 +396,7 @@ server.registerTool(
         dataDir,
         redact: redactOn,
         html,
+        noLlm,
         onProgress: (message) => progress.push(message),
       });
       return textResult(

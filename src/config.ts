@@ -9,6 +9,8 @@ export interface HandoverConfig {
   dataDir: string;
   /** scrub known secret formats from the LLM digest and the rendered book */
   redact: boolean;
+  /** force deterministic chapters even when an LLM credential is configured (nothing leaves the machine) */
+  noLlm: boolean;
 }
 
 export const DEFAULT_MODELS: Record<LlmProviderName, string> = {
@@ -37,5 +39,6 @@ export function loadConfig(overrides: Partial<HandoverConfig> = {}): HandoverCon
     ollamaUrl: overrides.ollamaUrl ?? env('OLLAMA_URL') ?? 'http://localhost:11434',
     dataDir: overrides.dataDir ?? env('HANDOVER_DATA_DIR') ?? 'handover-data',
     redact: overrides.redact ?? /^(1|true|yes)$/i.test(env('HANDOVER_REDACT') ?? ''),
+    noLlm: overrides.noLlm ?? /^(1|true|yes)$/i.test(env('HANDOVER_NO_LLM') ?? ''),
   };
 }
