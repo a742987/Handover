@@ -1,5 +1,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | **日本語** | [Español](README.es.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Deutsch](README.de.md) | [Монгол](README.mn.md) | [العربية](README.ar.md)
 
+> コミュニティ翻訳は、インストール手順とデータフローの説明において英語版 README に追いついていない場合があります。
+
 # Handover（引き継ぎマニュアル）
 
 > **開発者が退職しても、その知識まで連れていかれてはならない。**

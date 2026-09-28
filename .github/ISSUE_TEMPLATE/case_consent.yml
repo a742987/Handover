@@ -1,0 +1,27 @@
+name: Sample / case study consent
+description: You ran Handover for a real handover and are willing to (co-)publish a redacted case — start here
+labels: ["case-study"]
+body:
+  - type: textarea
+    id: context
+    attributes:
+      label: Your scenario (anonymized)
+      description: Team size, project type, the handover event (departure / rotation / long leave / vendor handoff). No names, no private URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What the report changed
+      description: Findings that turned into actions, anything that was wrong or missing.
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: What you are consenting to
+      description: Feedback and public case consent are separate decisions; nothing gets published without these boxes being explicit.
+      options:
+        - label: Feedback may be used to improve Handover (private)
+        - label: A redacted write-up may be published as a case study (we will send you the draft for approval first)
+        - label: Quotes from my words may be used in the write-up (same approval process)

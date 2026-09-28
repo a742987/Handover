@@ -1,0 +1,34 @@
+name: False positive / missing finding
+description: A report claimed something the repository does not support, or missed something important
+labels: ["report-quality"]
+body:
+  - type: textarea
+    id: claim
+    attributes:
+      label: The claim in the book
+      description: Quote the exact line from the report (or the action summary item).
+    validations:
+      required: true
+  - type: input
+    id: evidence-ref
+    attributes:
+      label: Evidence ref from the appendix (if present)
+      description: e.g. `a1b2c3d`, `owner/name#123`, `#123 review:456` — lets the citation be checked directly.
+  - type: textarea
+    id: reality
+    attributes:
+      label: What the repository / people involved actually show
+      description: What is wrong, what is missing, and how you know. Redact names, tokens and private URLs first.
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - False positive (stated, but not supported)
+        - Wrong repo/ref (citation points at the wrong thing)
+        - Missing finding (something important was not reported)
+        - Wrong emphasis (technically true, misleading)
+    validations:
+      required: true

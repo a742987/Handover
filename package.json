@@ -1,7 +1,7 @@
 {
   "name": "handover-book",
-  "version": "0.1.0",
-  "description": "When a developer leaves, their knowledge shouldn't. Reads a departing engineer's GitHub history and produces a bound, evidence-linked Handover Book.",
+  "version": "0.1.1",
+  "description": "Evidence-linked engineering handovers from Git history and PR discussions. Local CLI, ownership signals, and questions for the next maintainer.",
   "type": "module",
   "license": "MIT",
   "author": "Handover contributors",
@@ -36,15 +36,18 @@
     "mcp": "node dist/mcp.js",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
+    "sample": "node scripts/make-sample.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "offboarding",
     "handover",
-    "developer-experience",
+    "offboarding",
+    "developer-tools",
+    "code-ownership",
+    "bus-factor",
     "knowledge-management",
-    "github",
-    "cli"
+    "cli",
+    "mcp"
   ],
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

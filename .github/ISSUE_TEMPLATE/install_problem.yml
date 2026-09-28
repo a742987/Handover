@@ -1,0 +1,31 @@
+name: Install problem
+description: The install or the first run did not work (npm install, npx, first `handover gen`)
+labels: ["install"]
+body:
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you run?
+      description: The exact commands, starting from how you installed the package.
+    validations:
+      required: true
+  - type: textarea
+    id: error
+    attributes:
+      label: Full error output
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Windows 11 / macOS 15, Node 22.x, shell
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Quick checks
+      options:
+        - label: Node is >= 22.13 (`node --version`)
+        - label: Ran the command outside any clone of the Handover repo itself

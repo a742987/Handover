@@ -1,5 +1,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | **繁體中文** | [日本語](README.ja.md) | [Español](README.es.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Deutsch](README.de.md) | [Монгол](README.mn.md) | [العربية](README.ar.md)
 
+> 社群翻譯在安裝步驟與資料流說明上可能落後於英文版 README。
+
 # Handover（交接手冊）
 
 > **當一位開發者離開時，他的知識不應該跟著離開。**

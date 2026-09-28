@@ -1,5 +1,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Français](README.fr.md) | **Русский** | [Deutsch](README.de.md) | [Монгол](README.mn.md) | [العربية](README.ar.md)
 
+> Переводы сообщества могут отставать от английского README в шагах установки и описании потока данных.
+
 # Handover
 
 > **Когда разработчик уходит, его знания не должны уходить вместе с ним.**

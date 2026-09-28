@@ -1,0 +1,25 @@
+name: Feature request
+description: Propose an improvement — say which handover problem it solves
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The handover problem
+      description: What could a successor (or the team) not do, or not learn, without this?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Commands, flags, report sections — concretely.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope checks
+      options:
+        - label: This serves the core promise (successor knows what to read, verify, and ask), not a different product
+        - label: It can stay a local CLI feature (no accounts, no hosted service required)

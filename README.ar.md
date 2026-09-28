@@ -1,5 +1,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Deutsch](README.de.md) | [Монгол](README.mn.md) | **العربية**
 
+> قد تتأخر الترجمات المجتمعية عن نسخة README الإنجليزية في خطوات التثبيت وتفاصيل تدفق البيانات.
+
 # Handover
 
 > **عندما يغادر مطوّر، لا ينبغي أن تغادر معرفته معه.**

@@ -1,0 +1,32 @@
+name: Bug report
+description: Something in Handover itself is broken (crash, wrong output, bad error message)
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you ran, what you expected, what happened instead. Include the full command and the error output.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Handover version / install method
+      placeholder: 0.1.0, npm install -g handover-book
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: Windows 11 / Ubuntu 24.04, Node 22.x
+    validations:
+      required: true
+  - type: textarea
+    id: data-shape
+    attributes:
+      label: Data shape (no sensitive material)
+      description: GitHub repo(s) or local clones, roughly how many commits/PRs, whether an LLM provider was configured, which flags you used (--no-llm, --redact, ...).
+    validations:
+      required: false

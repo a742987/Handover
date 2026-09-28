@@ -1,5 +1,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Français](README.fr.md) | [Русский](README.ru.md) | **Deutsch** | [Монгол](README.mn.md) | [العربية](README.ar.md)
 
+> Community-Übersetzungen können bei den Installationsschritten und der Datenfluss-Beschreibung hinter dem englischen README zurückliegen.
+
 # Handover
 
 > **Wenn ein Entwickler geht, sollte sein Wissen nicht mitgehen.**

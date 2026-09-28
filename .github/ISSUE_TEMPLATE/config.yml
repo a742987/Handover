@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & answers (Discussions)
+    url: https://github.com/a742987/Handover/discussions/categories/q-a
+    about: Usage questions and "how do I ...?" — issues are for bugs and report-quality problems.
+  - name: Show & tell (Discussions)
+    url: https://github.com/a742987/Handover/discussions/categories/show-and-tell
+    about: How you used a Handover book in a real or simulated handover.
+  - name: Sample report (read before installing)
+    url: https://github.com/a742987/Handover/blob/main/examples/sample-report/handover-book-dana-dev.md
+    about: A complete, labelled synthetic sample with its verification record.

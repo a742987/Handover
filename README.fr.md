@@ -1,5 +1,7 @@
 [English](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Español](README.es.md) | **Français** | [Русский](README.ru.md) | [Deutsch](README.de.md) | [Монгол](README.mn.md) | [العربية](README.ar.md)
 
+> Les traductions communautaires peuvent être en retard sur le README anglais pour les étapes d'installation et le flux de données.
+
 # Handover
 
 > **Quand un·e développeur·se part, son savoir ne devrait pas partir avec lui.**

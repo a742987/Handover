@@ -2,49 +2,61 @@
 
 [**English**](README.md) | [简体中文](README.zh-CN.md) | [繁體中文](README.zh-TW.md) | [日本語](README.ja.md) | [Español](README.es.md) | [Français](README.fr.md) | [Русский](README.ru.md) | [Deutsch](README.de.md) | [Монгол](README.mn.md) | [العربية](README.ar.md)
 
-> **When a developer leaves, their knowledge shouldn't.**
-> Point Handover at a departing engineer's username, and it reads everything they ever committed, reviewed, and argued for — then produces a bound, evidence-linked **Handover Book** for the person who takes their place.
+> Community translations may lag behind the English README on install steps and data-flow details.
 
-One command. Runs locally. When an LLM provider is configured (the default), collected repository content is sent to it for synthesis; without an API key, everything stays deterministic and local.
+[![CI](https://github.com/a742987/Handover/actions/workflows/ci.yml/badge.svg)](https://github.com/a742987/Handover/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/handover-book)](https://www.npmjs.com/package/handover-book)
 
-```bash
-handover gen <username> --repo owner/name
-```
+**When a developer leaves, their knowledge shouldn't.**
 
----
+Turn Git history and PR discussions into an evidence-linked handover for the next maintainer. Handover finds maintenance concentrations, revisits past decisions with their original discussions, and lists the questions to confirm before the handover — every claim linked back to the commit, PR, review, or issue it came from.
+
+![Sample Handover Book: the action summary with data coverage and the top items to confirm before the handover](docs/report-screenshot.png)
+
+**[Read the sample handover](examples/sample-report/handover-book-dana-dev.md)** · **[See the demo script](docs/demo-script.md)** · **[Get started](#quick-start)**
+
+Runs locally. Remote LLM synthesis sends selected repository material to your configured provider; local Git with deterministic output is the simpler starting path — see [data flow](#data-flow--limits--read-this-before-you-choose-a-path).
 
 ## Why
 
 `git blame` tells you *who* wrote a line. It cannot tell you *why* — or which modules will silently lose their only reviewer, or which "weird" design decision is actually load-bearing. Wikis depend on people voluntarily writing, and exit meetings start after the resignation is announced and end before the knowledge is transferred.
 
-Handover covers the implicit losses nothing else covers:
+The book has six chapters, computed from your repositories:
 
 1. **Code Panorama** — every module they touched, its state, and its history
 2. **Implicit Knowledge Inventory** — modules where they were the *sole* author or *sole* reviewer
 3. **Risk Top 5** — "what breaks when they leave," ranked and scored, each item with an evidence chain
 4. **Decision Archaeology** — "why we chose this back then," quoting the actual PR/issue debates
 5. **The 30-Day Path** — the successor's learning plan
-6. **Letter to the Future** — the questions the successor will ask, answered in the departing dev's own voice
+6. **Questions & Draft Answers** — what to ask before the last day, plus the departing engineer's own recorded answers
+
+Every book opens with an **action summary**: what the data covers, what it misses, and the few things worth confirming first. Every claim cites its evidence; unproven judgments are labelled *(inference)*; only answers recorded with `handover capture` speak in the departing engineer's voice. `handover verify` checks that every cited ref actually exists in the index.
 
 ## Quick start
 
-Requirements: **Node ≥ 22.13** (ships with built-in SQLite — no native compilation), a GitHub token for reasonable rate limits.
+The shortest path — one command, no clone (needs Node ≥ 22.13):
 
 ```bash
-git clone https://github.com/a742987/Handover.git && cd Handover
-npm install
+npm install -g handover-book
 
-export GITHUB_TOKEN=ghp_...          # repo scope for private repos
-npm run dev -- gen <username> --repo owner/name
+# from GitHub (needs a token for reasonable rate limits):
+export GITHUB_TOKEN=ghp_...
+handover gen <username> --repo owner/name --html
 
-# or with no token at all — read the person's local clones directly:
-npm run dev -- gen <username> --git-dir ~/work/api --git-dir ~/work/web
+# or with no token, no network — read the person's local clones directly:
+handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 ```
 
 Output lands in `handover-data/`:
 
 - `handover-data/<username>.db` — the local SQLite index (one file per person; second runs are incremental and near-instant)
-- `handover-data/handover-book-<username>.md` — the bound book
+- `handover-data/handover-book-<username>.md` — the bound book (with `--html`, a print-ready single-file HTML twin; browser print gives you the PDF)
+
+Prefer running from source? `git clone https://github.com/a742987/Handover && cd Handover && npm install && npm run dev -- gen <username> --repo owner/name`.
+
+Not sure it's worth it? [Read the full sample report first](examples/sample-report/handover-book-dana-dev.md) — a complete, unmodified book for a labelled synthetic scenario, including the verification record for its claims.
+
+Something in a generated report looks wrong? That's the most useful feedback we can get: [open a report-quality issue](../../issues/new?template=false_positive.yml) with the claim and its evidence ref.
 
 ### Commands
 
@@ -57,19 +69,33 @@ Output lands in `handover-data/`:
 | `risk <username> [--json]` | print the Risk Top 5 from the local index |
 | `bus-factor <username>` | team view: which modules only one person commits to, merged with CODEOWNERS when the repo has one |
 | `gate <username> --files changed.txt` | CI check: does this change set touch sole-owned modules? (`--comment`, `--fail-on-match`, `--repo owner/name` to scope a multi-repo index; see [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
+| `verify <username>` | citation existence check: every ref cited in the rendered book must exist in the index (exit 1 on missing refs — CI-friendly, `--json` for machines) |
 | `render <username>` | re-render the book from the index without GitHub access (chapters 4-6 call the LLM provider only if an API key is set; pass `-r` to override the repositories recorded in the index) |
 
-Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>` (zoneless times are treated as UTC), `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed), `--html` (also write a print-ready single-file HTML twin — browser print gives you the PDF), `--redact` (scrub known secret formats from the LLM digest and the book; also `HANDOVER_REDACT=1`). `gen` and `collect` accept `--author <identity>` to match the departing engineer's name/email in local clones; `capture --list` prints captured answers; `bus-factor` takes `--top <n>`, `--window <days>` and `--json` for CI.
+Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>` (zoneless times are treated as UTC), `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed), `--html` (print-ready HTML twin), `--redact` (scrub known secret formats from the LLM digest and the book; also `HANDOVER_REDACT=1`), `--no-llm` (skip LLM synthesis even when a key is configured — deterministic chapters only, nothing leaves the machine; also `HANDOVER_NO_LLM=1`). `gen` and `collect` accept `--author <identity>` to match the departing engineer's name/email in local clones; `capture --list` prints captured answers; `bus-factor` takes `--top <n>`, `--window <days>` and `--json` for CI.
+
+## Data flow & limits — read this before you choose a path
+
+Collection and indexing always run on your machine. What happens next depends on the path you pick:
+
+| Path | Good for | What you need to know |
+|---|---|---|
+| **Local Git + deterministic** (`--git-dir`, no LLM key or `--no-llm`) | first trials, sensitive code, sharing the tool with locked-down teams | No GitHub PR / review / issue discussions — "why" decisions and review coverage are missing; chapters 4-6 are deterministic summaries. The book's action page states this gap explicitly. |
+| **GitHub + deterministic** (`-r owner/name` with `GITHUB_TOKEN`, `--no-llm`) | teams who want discussion records but no LLM | Requires a GitHub token (repo scope for private repos); chapters 4-6 are deterministic digests of the richest discussions. |
+| **GitHub / local Git + remote LLM** (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) | narrative chapters 4-6 | Collected repository material is sent to the configured provider for synthesis. Without a key the run never contacts an LLM and falls back to deterministic chapters instead of failing. |
+| **Local Git + local model** (`--provider ollama`) | synthesis that stays on your machine | Requires [Ollama](https://ollama.com) running locally; model quality for synthesis is untested — verify the output. |
+
+`--no-llm` / `HANDOVER_NO_LLM=1` is the explicit off-switch: even with a key in the environment, nothing is sent anywhere. "Runs locally" refers to collection, indexing and rendering — it is not a claim that repository content never leaves the machine when a remote provider is configured.
 
 ### LLM providers
 
-Chapters 1–3 are computed deterministically from the index — they always work, with or without an API key. Chapters 4–6 are synthesized by an LLM; **without a key they fall back to deterministic summaries** instead of failing.
+Chapters 1–3 are computed deterministically from the index — they always work, with or without an API key. Chapters 4–6 are synthesized by an LLM when one is configured.
 
 - **Anthropic** — set `ANTHROPIC_API_KEY` (default provider)
 - **OpenAI** — set `OPENAI_API_KEY`, run with `--provider openai`
 - **Ollama** — fully local, no key: start Ollama and run with `--provider ollama`
 
-Every LLM chapter operates under one hard rule: **evidence chain or nothing.** Claims the model cannot support with a commit, PR, review, or issue ref must be labelled *(inference)* — unverifiable assertions have no place in a handover document.
+Every LLM chapter operates under one hard rule: **evidence chain or nothing.** Claims the model cannot support with a commit, PR, review, or issue ref must be labelled *(inference)*. Chapter 6 never impersonates the departing engineer: draft answers are marked as drafts to confirm, and only `handover capture` answers are first-person. Run `handover verify` to check every citation in a rendered book.
 
 ## How risk is scored (and why you can trust it)
 
@@ -80,7 +106,7 @@ risk = sole_contribution_ratio
      × irreplaceability            (sole reviewer +0.5, sole author +0.25)
 ```
 
-Every Risk Top 5 item lists the exact commits, reviews, and issues that justify its score — each one a deep link into the repo. The formula lives in [`src/risk/engine.ts`](src/risk/engine.ts) — read it, challenge it, tune it.
+Every Risk Top 5 item lists the exact commits, reviews, and issues that justify its score — each one a deep link into the repo. The score is a maintenance/ownership **signal from Git records**, not a prediction of incidents and not a measure of a person's knowledge or value; every book says so, and the action page asks a human to confirm each item. The formula lives in [`src/risk/engine.ts`](src/risk/engine.ts) — read it, challenge it, tune it.
 
 ## Architecture
 
@@ -129,9 +155,9 @@ The plugin registers the `handover` MCP server automatically (via the `mcpServer
 ## Privacy and ethics — read this before you run it for someone
 
 - **A gift, not an audit.** Handover exists to hand a successor the map, never to grade the person leaving. Run it *with* the departing engineer, not around them. Their review comments and commit messages are quoted back to colleagues — if they wouldn't say it in a farewell doc, it doesn't belong in the book.
-- **Local-first.** Collection, indexing, and rendering all run on your machine. The only network calls are to GitHub's API and your configured LLM provider. Choose **Ollama** and not a single byte of repository content reaches any third party.
+- **Local-first, stated precisely.** Collection, indexing, and rendering all run on your machine. The only network calls are to GitHub's API and your configured LLM provider. With `--no-llm` (or Ollama), no repository content reaches any third party; with a remote provider configured, selected material is sent to it for synthesis.
 - **The index is sensitive.** `handover-data/*.db` contains your team's full commit history. It is gitignored by default; treat the file like a credential.
-- **Hallucination is a bug, not a quirk.** LLM output must cite evidence refs; unsupported claims must be labelled *(inference)*. Don't trust a chapter you haven't spot-checked against its evidence chain.
+- **Hallucination is a bug, not a quirk.** LLM output must cite evidence refs; unsupported claims must be labelled *(inference)*. Draft Q&A in chapter 6 is marked for confirmation — only captured answers speak as the person. Run `handover verify` before you circulate a book.
 - **Secret scrubbing.** `--redact` / `HANDOVER_REDACT=1` strips known secret formats (GitHub/AWS/Slack/GitLab tokens, `key: value` assignments, private key blocks) before anything reaches an LLM and from the rendered book — best effort, not a guarantee.
 - **Anonymization** (real names → role codes, for HR contexts) is on the roadmap before any team/enterprise tier ships.
 
@@ -142,9 +168,10 @@ npm run typecheck   # tsc --noEmit
 npm test            # vitest
 npm run build       # dist/
 npm run dev -- ...  # run the CLI from source
+npm run sample      # regenerate the committed sample book (examples/sample-report/)
 ```
 
-Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM providers. CI runs typecheck + tests + build on pushes to main and on every pull request.
+Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM providers. CI runs typecheck + tests + build on pushes to main and on every pull request. See [CONTRIBUTING.md](CONTRIBUTING.md) for the PR flow and good first issues, and [ROADMAP.md](ROADMAP.md) for what is planned, in progress, and deliberately out of scope.
 
 ## Roadmap
 
@@ -156,6 +183,8 @@ Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM p
 - [x] Print-ready single-file HTML twin (`--html`; browser print → PDF)
 - [x] CI integration — `risk --json`, `gate` command + example workflow
 - [x] `handover_search` MCP tool + `--redact` secret scrubbing
+- [x] Action-summary first page with data coverage, `handover verify` citation check, explicit `--no-llm` off-switch
+- [x] Committed sample book with verification record (`examples/sample-report/`)
 - [ ] `npx handover-book gen` end-to-end on a real public repo (MVP, weeks 1–3)
 - [ ] Local web reader with evidence deep links (v0.2)
 - [ ] Org-wide capability risk map (v1.0)
