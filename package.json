@@ -1,6 +1,6 @@
 {
   "name": "handover-book",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Evidence-linked engineering handovers from Git history and PR discussions. Local CLI, ownership signals, and questions for the next maintainer.",
   "type": "module",
   "license": "MIT",
@@ -39,7 +39,8 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
     "test": "vitest run",
     "sample": "node scripts/make-sample.mjs",
-    "prepublishOnly": "npm run build"
+    "smoke": "node scripts/smoke.mjs --pack",
+    "prepublishOnly": "npm run build && node scripts/check-release.mjs"
   },
   "keywords": [
     "handover",

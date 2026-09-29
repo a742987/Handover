@@ -54,6 +54,8 @@ Output lands in `handover-data/`:
 
 Prefer running from source? `git clone https://github.com/a742987/Handover && cd Handover && npm install && npm run dev -- gen <username> --repo owner/name`.
 
+**Windows / WSL:** keep the index on a native filesystem (`C:\…`), not a WSL-mounted drive path (`/mnt/d/…`). SQLite takes byte-range locks that 9P-mounted paths do not honor reliably, so a `--data-dir` under `/mnt/...` can intermittently report `database is locked` and wait out the 5-second busy timeout. The same applies to `HANDOVER_DATA_DIR`.
+
 Not sure it's worth it? [Read the full sample report first](examples/sample-report/handover-book-dana-dev.md) — a complete, unmodified book for a labelled synthetic scenario, including the verification record for its claims.
 
 Something in a generated report looks wrong? That's the most useful feedback we can get: [open a report-quality issue](../../issues/new?template=false_positive.yml) with the claim and its evidence ref.
@@ -68,11 +70,11 @@ Something in a generated report looks wrong? That's the most useful feedback we 
 | `capture <username>` | sit down with the departing engineer and record their own answers; they are bound into chapter 6 (`--answers q.json` for agents and scripts) |
 | `risk <username> [--json]` | print the Risk Top 5 from the local index |
 | `bus-factor <username>` | team view: which modules only one person commits to, merged with CODEOWNERS when the repo has one |
-| `gate <username> --files changed.txt` | CI check: does this change set touch sole-owned modules? (`--comment`, `--fail-on-match`, `--repo owner/name` to scope a multi-repo index; see [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
+| `gate <username> --files changed.txt` | CI check: does this change set touch sole-owned modules? (`--comment`, `--fail-on-match` (exit 1 on a hit — a failed run also exits 1, so check stderr before treating it as a signal), `--repo owner/name` to scope a multi-repo index; see [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
 | `verify <username>` | citation existence check: every ref cited in the rendered book must exist in the index (exit 1 on missing refs — CI-friendly, `--json` for machines) |
-| `render <username>` | re-render the book from the index without GitHub access (chapters 4-6 call the LLM provider only if an API key is set; pass `-r` to override the repositories recorded in the index) |
+| `render <username>` | re-render the book from the index without GitHub access (chapters 4-6 call the LLM provider only with `--use-llm` and a key; pass `-r` to override the repositories recorded in the index) |
 
-Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>` (zoneless times are treated as UTC), `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed), `--html` (print-ready HTML twin), `--redact` (scrub known secret formats from the LLM digest and the book; also `HANDOVER_REDACT=1`), `--no-llm` (skip LLM synthesis even when a key is configured — deterministic chapters only, nothing leaves the machine; also `HANDOVER_NO_LLM=1`). `gen` and `collect` accept `--author <identity>` to match the departing engineer's name/email in local clones; `capture --list` prints captured answers; `bus-factor` takes `--top <n>`, `--window <days>` and `--json` for CI. GitHub Enterprise Server: set `GITHUB_API_URL` to your instance's API base (e.g. `https://ghe.example.com/api/v3`) to point collection at it.
+Common flags: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>` (zoneless times are treated as UTC), `--data-dir <dir>`, `--refresh` (re-fetch what is already indexed), `--html` (print-ready HTML twin), `--use-llm` (**opt in** to LLM synthesis — content leaves the machine; also `HANDOVER_LLM=1`), `--no-redact` (opt **out** of secret scrubbing, which is on by default; also `HANDOVER_NO_REDACT=1`). `--no-llm` remains accepted and is now the default. `gen` and `collect` accept `--author <identity>` to match the departing engineer's name/email in local clones; `capture --list` prints captured answers; `bus-factor` takes `--top <n>`, `--window <days>` and `--json` for CI. GitHub Enterprise Server: set `GITHUB_API_URL` to your instance's API base (e.g. `https://ghe.example.com/api/v3`) **and** `HANDOVER_GHE_HOST` to that hostname. `GITHUB_API_URL` decides where `GITHUB_TOKEN` is sent, so an https URL on an unlisted host is refused rather than followed. Every variable this tool reads is listed, with its default and its consequence, in [`.env.example`](.env.example).
 
 ## Data flow & limits — read this before you choose a path
 
@@ -80,20 +82,20 @@ Collection and indexing always run on your machine. What happens next depends on
 
 | Path | Good for | What you need to know |
 |---|---|---|
-| **Local Git + deterministic** (`--git-dir`, no LLM key or `--no-llm`) | first trials, sensitive code, sharing the tool with locked-down teams | No GitHub PR / review / issue discussions — "why" decisions and review coverage are missing; chapters 4-6 are deterministic summaries. The book's action page states this gap explicitly. |
-| **GitHub + deterministic** (`-r owner/name` with `GITHUB_TOKEN`, `--no-llm`) | teams who want discussion records but no LLM | Requires a GitHub token (repo scope for private repos); chapters 4-6 are deterministic digests of the richest discussions. |
-| **GitHub / local Git + remote LLM** (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) | narrative chapters 4-6 | Collected repository material is sent to the configured provider for synthesis. Without a key the run never contacts an LLM and falls back to deterministic chapters instead of failing. |
-| **Local Git + local model** (`--provider ollama`) | synthesis that stays on your machine | Requires [Ollama](https://ollama.com) running locally; model quality for synthesis is untested — verify the output. |
+| **Local Git + deterministic** (`--git-dir`; the default — no LLM call at all) | first trials, sensitive code, sharing the tool with locked-down teams | No GitHub PR / review / issue discussions — "why" decisions and review coverage are missing; chapters 4-6 are deterministic summaries. The book's action page states this gap explicitly. |
+| **GitHub + deterministic** (`-r owner/name`; LLM off by default) | teams who want discussion records but no LLM | Works with no token for public repositories, at 60 requests/hour; set `GITHUB_TOKEN` for private repos (repo scope) or larger collections. Chapters 4-6 are deterministic digests of the richest discussions. |
+| **GitHub / local Git + remote LLM** (`--use-llm` plus `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) | narrative chapters 4-6 | Collected repository material is sent to the configured provider for synthesis. **This is opt-in**: without `--use-llm` / `HANDOVER_LLM=1` the run never contacts an LLM, even when a key is present in your environment. Without a key it falls back to deterministic chapters instead of failing. |
+| **Local Git + local model** (`--provider ollama --use-llm`) | synthesis that stays on your machine | Requires [Ollama](https://ollama.com) running locally; model quality for synthesis is untested — verify the output. |
 
-`--no-llm` / `HANDOVER_NO_LLM=1` is the explicit off-switch: even with a key in the environment, nothing is sent anywhere. "Runs locally" refers to collection, indexing and rendering — it is not a claim that repository content never leaves the machine when a remote provider is configured.
+`--use-llm` / `HANDOVER_LLM=1` is the explicit **on**-switch, and it is off by default: a key that happens to be in your environment for other tooling does not authorize an upload. `--no-llm` / `HANDOVER_NO_LLM=1` still force it off. Secret redaction (`--redact`, on unless you pass `--no-redact`) scrubs known credential formats from the digest and the book, and is deliberately not a guarantee — anything committed as plaintext can survive the patterns.
 
 ### LLM providers
 
-Chapters 1–3 are computed deterministically from the index — they always work, with or without an API key. Chapters 4–6 are synthesized by an LLM when one is configured.
+Chapters 1–3 are computed deterministically from the index — they always work, with or without an API key. Chapters 4–6 are synthesized by an LLM only when you pass `--use-llm` (or `HANDOVER_LLM=1`) and a key is configured.
 
-- **Anthropic** — set `ANTHROPIC_API_KEY` (default provider)
+- **Anthropic** — set `ANTHROPIC_API_KEY` (default provider once synthesis is enabled)
 - **OpenAI** — set `OPENAI_API_KEY`, run with `--provider openai`
-- **Ollama** — fully local, no key: start Ollama and run with `--provider ollama`
+- **Ollama** — fully local, no key: start Ollama and run with `--provider ollama --use-llm`. `--use-llm` is required — `--provider` only selects *which* provider; LLM synthesis itself is opt-in.
 
 Every LLM chapter operates under one hard rule: **evidence chain or nothing.** Claims the model cannot support with a commit, PR, review, or issue ref must be labelled *(inference)*. Chapter 6 never impersonates the departing engineer: draft answers are marked as drafts to confirm, and only `handover capture` answers are first-person. Run `handover verify` to check every citation in a rendered book.
 
@@ -122,7 +124,7 @@ Every Risk Top 5 item lists the exact commits, reviews, and issues that justify 
 
 ## Editor plugins
 
-The same CLI drives three integrations. The common layer is a **built-in MCP server** (`handover-mcp`, ships in the npm package) that exposes `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (read-only evidence lookup for follow-up questions), and `handover_render` as tools — any MCP client can use it without shelling out to the CLI.
+The same CLI drives three integrations. The common layer is a **built-in MCP server** (`handover-mcp`, ships in the npm package) that exposes `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (read-only evidence lookup for follow-up questions), `handover_render`, and `handover_verify` (checks every evidence citation against the index) as tools — any MCP client can use it without shelling out to the CLI.
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -150,7 +152,7 @@ The plugin registers the `handover` MCP server automatically (via the `mcpServer
    ```
 2. Copy [`codex/handover.md`](codex/handover.md) to `~/.codex/prompts/handover.md`, then run `/handover <username> --repo owner/name`.
 
-**Any other MCP client** (Cursor, ZCode, …) — register `handover-mcp` as a stdio server; same six tools everywhere.
+**Any other MCP client** (Cursor, ZCode, …) — register `handover-mcp` as a stdio server; same seven tools everywhere.
 
 ## Privacy and ethics — read this before you run it for someone
 
@@ -158,7 +160,7 @@ The plugin registers the `handover` MCP server automatically (via the `mcpServer
 - **Local-first, stated precisely.** Collection, indexing, and rendering all run on your machine. The only network calls are to GitHub's API and your configured LLM provider. With `--no-llm` (or Ollama), no repository content reaches any third party; with a remote provider configured, selected material is sent to it for synthesis.
 - **The index is sensitive.** `handover-data/*.db` contains your team's full commit history. It is gitignored by default; treat the file like a credential.
 - **Hallucination is a bug, not a quirk.** LLM output must cite evidence refs; unsupported claims must be labelled *(inference)*. Draft Q&A in chapter 6 is marked for confirmation — only captured answers speak as the person. Run `handover verify` before you circulate a book.
-- **Secret scrubbing.** `--redact` / `HANDOVER_REDACT=1` strips known secret formats (GitHub/AWS/Slack/GitLab tokens, `key: value` assignments, private key blocks) before anything reaches an LLM and from the rendered book — best effort, not a guarantee.
+- **Secret scrubbing.** On by default (`--no-redact` / `HANDOVER_NO_REDACT=1` to turn it off; `--redact` and the older `HANDOVER_REDACT=1` remain accepted but are redundant). It strips known secret formats (GitHub/AWS/Slack/GitLab tokens, `key: value` assignments, private key blocks) before anything reaches an LLM and from the rendered book — best effort, not a guarantee.
 - **Anonymization** (real names → role codes, for HR contexts) is on the roadmap before any team/enterprise tier ships.
 
 ## Development
@@ -186,7 +188,8 @@ Stack: TypeScript · Node (built-in `node:sqlite`) · Octokit · pluggable LLM p
 - [x] Action-summary first page with data coverage, `handover verify` citation check, explicit `--no-llm` off-switch
 - [x] Committed sample book with verification record (`examples/sample-report/`)
 - [x] Clean-environment end-to-end from the published npm package: install → `gen` (local Git, `--no-llm`) → `verify` ([verification record](docs/install-verification.md))
-- [ ] GitHub-token collection (`-r owner/name`) end-to-end on a public repo, and one Unix environment in the clean run
+- [x] Anonymous `-r owner/name` collection end-to-end on a public repo ([verification record](docs/install-verification.md), Record 3)
+- [ ] Authenticated collection (`GITHUB_TOKEN`) end-to-end — private repos, deep pagination, and one Unix environment in the clean run
 - [ ] Local web reader with evidence deep links (v0.2)
 - [ ] Org-wide capability risk map (v1.0)
 

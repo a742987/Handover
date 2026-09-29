@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/a742987/Handover/security/policy
+    about: Private report — never open a public issue for a credential leak, a renderer injection, or anything that sends repository content off the machine. See SECURITY.md.
   - name: Questions & answers (Discussions)
     url: https://github.com/a742987/Handover/discussions/categories/q-a
     about: Usage questions and "how do I ...?" — issues are for bugs and report-quality problems.

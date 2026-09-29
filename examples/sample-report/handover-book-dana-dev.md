@@ -3,9 +3,10 @@
 *When a developer leaves, their knowledge shouldn't.*
 
 - **Repositories:** demo\-shop
-- **Generated:** 2026-09-29T02:25:16.461Z
+- **Generated:** 2026-09-29T11:01:37.155Z
 - **Chapters:** 6
 - **Synthesis:** deterministic (no LLM key configured)
+- **Redaction:** known secret formats were scrubbed from this rendering (best effort, not a guarantee).
 
 > This book is **a gift for the successor**, not an audit of the leaver. It was generated locally from Git history and GitHub metadata; nothing was uploaded anywhere. Claims without an evidence ref are labelled *(inference)*.
 

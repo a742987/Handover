@@ -4,7 +4,7 @@ import { promisify } from 'node:util';
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { GitDirectoryCollector, resolveNumstatPath } from '../src/collect/git.js';
+import { GitDirectoryCollector, recordedLocalRepoKeys, resolveNumstatPath } from '../src/collect/git.js';
 import { HandoverStore } from '../src/store/sqlite.js';
 
 const execFileAsync = promisify(execFile);
@@ -64,6 +64,16 @@ describe('resolveNumstatPath', () => {
   it('resolves full-path renames and quoted paths', () => {
     expect(resolveNumstatPath('old.ts => new.ts')).toBe('new.ts');
     expect(resolveNumstatPath('"spaced file.ts"')).toBe('spaced file.ts');
+  });
+
+  it('keeps literal non-ASCII intact while decoding octal escapes', () => {
+    // quotePath=false leaves 支払 literal, but a backslash in the same name
+    // still forces the octal-decode branch — pushing charCodeAt straight into
+    // a byte buffer truncated every code above 255 (支 became "/").
+    expect(resolveNumstatPath('支払\\346\\226\\207a.ts')).toBe('支払文a.ts');
+    // git's own quoting of a literal backslash ("\\") must survive next to
+    // non-ASCII too: "支払\\123x" is 支払, a backslash, then octal 123 = "S".
+    expect(resolveNumstatPath('"支払\\\\123x"')).toBe('支払\\Sx');
   });
 });
 
@@ -247,5 +257,94 @@ describe('timestamp normalization and history pruning', () => {
     expect(shas).not.toContain(originalSha);
     expect(shas).toHaveLength(1);
     store.close();
+  });
+});
+
+describe('the collector re-checks the values it hands to git', () => {
+  // The CLI validates --since through args.parseSince, but GitDirectoryCollector
+  // is also reachable as a library (the MCP server gets there via the pipeline),
+  // so the option-shaped value it splices into `git log` is checked again here.
+  it('refuses a --since value that git could read as another option', async () => {
+    const repo = await makeRepo();
+    await commitFile(repo, 'Alice', 'alice@example.com', 'a.txt', '1\n', 'one');
+    const store = HandoverStore.inMemory();
+    try {
+      // option-shaped values and impossible dates are both refused, by the same
+      // validator the --since flag uses
+      for (const hostile of ['--output=/tmp/pwned', '-R', '2026-13-45', '2026-01-01T99:00:00Z']) {
+        await expect(
+          new GitDirectoryCollector().collectInto(store, 'alice', [repo], { since: hostile }),
+        ).rejects.toThrow(/expects an ISO date|not a real calendar date|out-of-range time component/);
+      }
+    } finally {
+      store.close();
+    }
+  });
+
+  it('still accepts the ISO form the CLI actually produces', async () => {
+    const repo = await makeRepo();
+    await commitFile(repo, 'Alice', 'alice@example.com', 'a.txt', '1\n', 'one', '2026-09-01T00:00:00Z');
+    await commitFile(repo, 'Alice', 'alice@example.com', 'b.txt', '2\n', 'two', '2026-09-05T00:00:00Z');
+    const store = HandoverStore.inMemory();
+    try {
+      const result = await new GitDirectoryCollector().collectInto(store, 'alice', [repo], {
+        since: new Date('2026-09-03T00:00:00Z').toISOString(),
+      });
+      expect(result.indexedCommits).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe('the persisted basename→toplevel map is untrusted input', () => {
+  // A hand-around index database can have its meta blob rewritten by whoever
+  // holds the file, so a bad blob must degrade to "no record" rather than crash
+  // or feed nonsense into repo-key derivation.
+  const META = 'local_toplevels';
+
+  it('ignores a blob that is not a JSON object of strings', () => {
+    for (const junk of ['', 'not json', '[1,2]', '"a string"', '42', 'null', '{"repo":[1,2]}', '{"repo":null}']) {
+      const store = HandoverStore.inMemory();
+      try {
+        store.setMeta(META, junk);
+        expect(recordedLocalRepoKeys(store)).toEqual([]);
+      } finally {
+        store.close();
+      }
+    }
+  });
+
+  it('keeps the string entries of a partly-valid blob', () => {
+    const store = HandoverStore.inMemory();
+    try {
+      store.setMeta(META, JSON.stringify({ good: '/srv/good', bad: { nested: true }, num: 7 }));
+      expect(recordedLocalRepoKeys(store)).toEqual(['good']);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('indexes a clone named after an Object.prototype member under its own name', async () => {
+    // The lookup side is the risk: `toplevels['constructor']` on a plain object
+    // literal reads the inherited property, so the first run named the repo after
+    // a hash of its path and every later run disagreed with it.
+    const parent = await mkdtemp(path.join(tmpdir(), 'handover-proto-'));
+    tempDirs.push(parent);
+    const repo = path.join(parent, 'constructor');
+    await mkdir(repo);
+    await gitIn(repo, ['init', '-q', '-b', 'main']);
+    await commitFile(repo, 'Alice', 'alice@example.com', 'a.txt', '1\n', 'one');
+
+    const store = HandoverStore.inMemory();
+    try {
+      const first = await new GitDirectoryCollector().collectInto(store, 'alice', [repo], {});
+      expect(first.repos).toEqual(['constructor']);
+      const second = await new GitDirectoryCollector().collectInto(store, 'alice', [repo], {});
+      expect(second.repos).toEqual(['constructor']);
+      expect(recordedLocalRepoKeys(store)).toEqual(['constructor']);
+    } finally {
+      store.close();
+    }
   });
 });

@@ -7,7 +7,7 @@
 > **Quand un·e développeur·se part, son savoir ne devrait pas partir avec lui.**
 > Pointez Handover vers le nom d'utilisateur d'un ingénieur sur le départ, et il lira tout ce qu'il ou elle a jamais commité, relu et défendu — puis produira un **Livre de Passation** (Handover Book) relié et adossé aux preuves, pour la personne qui prend la relève.
 
-Une seule commande. S'exécute localement. Lorsqu'un fournisseur LLM est configuré (par défaut), le contenu du dépôt collecté lui est envoyé pour synthèse ; sans clé API, tout reste déterministe et local.
+Une seule commande. S'exécute localement. La synthèse par un LLM distant est optionnelle (`--use-llm` ou `HANDOVER_LLM=1`) ; sans elle, rien ne quitte la machine et les chapitres 4-6 sont générés de façon déterministe.
 
 ```bash
 handover gen <username> --repo owner/name
@@ -61,9 +61,9 @@ Vous préférez l'exécuter depuis les sources ? `git clone https://github.com/a
 | `bus-factor <username>` | vue d'équipe : quels modules ne reçoivent des commits que d'une seule personne, avec fusion de CODEOWNERS quand le dépôt en a un |
 | `gate <username> --files changed.txt` | contrôle CI : ce jeu de changements touche-t-il des modules à propriétaire unique ? (`--comment`, `--fail-on-match`, `--repo owner/name` pour circonscrire un index multi-dépôts ; voir [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
 | `verify <username>` | contrôle d'existence des citations : chaque référence citée dans le livre généré doit exister dans l'index (exit 1 s'il en manque — compatible CI, `--json` pour les machines) |
-| `render <username>` | régénérer le livre à partir de l'index, sans accès à GitHub (les chapitres 4-6 n'appellent le fournisseur LLM que si une clé API est configurée ; passez `-r` pour remplacer les dépôts enregistrés dans l'index) |
+| `render <username>` | régénérer le livre à partir de l'index, sans accès à GitHub (les chapitres 4-6 n'appellent le fournisseur LLM que si `--use-llm` est passé et qu'une clé API est configurée ; passez `-r` pour remplacer les dépôts enregistrés dans l'index) |
 
-Flags courants : `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (récupère à nouveau ce qui est déjà indexé), `--html` (jumeau HTML prêt à imprimer), `--redact` (supprime les formats de secrets connus du résumé destiné au LLM et du livre ; aussi `HANDOVER_REDACT=1`), `--no-llm` (saute la synthèse LLM même quand une clé est configurée — uniquement des chapitres déterministes, rien ne quitte la machine ; aussi `HANDOVER_NO_LLM=1`). `gen` et `collect` acceptent `--author <identity>` pour faire correspondre le nom/courriel de la personne qui part dans les clones locaux.
+Flags courants : `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (récupère à nouveau ce qui est déjà indexé), `--html` (jumeau HTML prêt à imprimer), `--redact` (supprime les formats de secrets connus du résumé destiné au LLM et du livre ; **activé par défaut**), `--use-llm` / `HANDOVER_LLM=1` ([README.md#llm-providers](README.md#llm-providers), [.env.example](.env.example)), `--no-redact` (conserve le texte du dépôt tel quel, aussi `HANDOVER_NO_REDACT=1`), `--no-llm` (saute la synthèse LLM même quand une clé est configurée — uniquement des chapitres déterministes, rien ne quitte la machine ; aussi `HANDOVER_NO_LLM=1`). `gen` et `collect` acceptent `--author <identity>` pour faire correspondre le nom/courriel de la personne qui part dans les clones locaux.
 
 ### Fournisseurs de LLM
 
@@ -71,7 +71,7 @@ Les chapitres 1 à 3 sont calculés de façon déterministe à partir de l'index
 
 - **Anthropic** — définissez `ANTHROPIC_API_KEY` (fournisseur par défaut)
 - **OpenAI** — définissez `OPENAI_API_KEY` et lancez avec `--provider openai`
-- **Ollama** — entièrement local, sans clé : démarrez Ollama et lancez avec `--provider ollama`
+- **Ollama** — entièrement local, sans clé : démarrez Ollama et lancez avec `--provider ollama --use-llm`. `--use-llm` est obligatoire — `--provider` ne fait que choisir le fournisseur ; la synthèse LLM doit être activée explicitement.
 
 Chaque chapitre produit par un LLM obéit à une règle absolue : **chaîne de preuves ou rien.** Les affirmations que le modèle ne peut pas étayer par une référence à un commit, une PR, une review ou une issue doivent être marquées *(inférence)* — les assertions invérifiables n'ont pas leur place dans un document de passation.
 
@@ -100,7 +100,7 @@ Chaque point du Top 5 des risques liste les commits, reviews et issues exacts qu
 
 ## Plugins d'éditeur
 
-Le même CLI pilote trois intégrations. La couche commune est un **serveur MCP intégré** (`handover-mcp`, livré dans le paquet npm) qui expose `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (consultation de preuves en lecture seule pour les questions de suivi) et `handover_render` comme outils — n'importe quel client MCP peut l'utiliser sans passer par le CLI.
+Le même CLI pilote trois intégrations. La couche commune est un **serveur MCP intégré** (`handover-mcp`, livré dans le paquet npm) qui expose `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (consultation de preuves en lecture seule pour les questions de suivi), `handover_render` et `handover_verify` (vérifie chaque citation de preuve contre l'index) comme outils — n'importe quel client MCP peut l'utiliser sans passer par le CLI.
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -128,7 +128,7 @@ Le plugin enregistre automatiquement le serveur MCP `handover` (via le champ `mc
    ```
 2. Copiez [`codex/handover.md`](codex/handover.md) vers `~/.codex/prompts/handover.md`, puis lancez `/handover <username> --repo owner/name`.
 
-**Tout autre client MCP** (Cursor, ZCode, …) — enregistrez `handover-mcp` comme serveur stdio ; les mêmes six outils partout.
+**Tout autre client MCP** (Cursor, ZCode, …) — enregistrez `handover-mcp` comme serveur stdio ; les mêmes sept outils partout.
 
 ## Vie privée et éthique — lisez ceci avant de le lancer pour quelqu'un
 

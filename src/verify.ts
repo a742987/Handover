@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import type { HandoverStore } from './store/sqlite.js';
 
 /**
@@ -34,7 +33,9 @@ export interface VerifyReport {
   missingCount: number;
 }
 
-const COMMIT_TOKEN = /\[`?([0-9a-f]{7,40})`?\]/g;
+// Git shas are hex; a book or a human may cite them in any case, so the token
+// accepts both and the sha is normalized to lowercase for the index lookup.
+const COMMIT_TOKEN = /\[`?([0-9a-fA-F]{7,40})`?\]/g;
 const NUM_TOKEN = /\[`?([A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*)?#(\d+)(?:\s+review:(\d+))?`?\]/g;
 // Bare review citations ("[review:456]") are the exact format the LLM system
 // prompt instructs the model to emit, so they must be checked, not skipped.
@@ -49,16 +50,30 @@ interface FoundToken {
   reviewId?: number;
 }
 
+/**
+ * A commit citation is a git sha; a bare bracketed hex token in prose is far
+ * more often a date, ticket id or count ([20240101]) than the ~1-in-10M
+ * all-digit 7-char sha, so short tokens must contain at least one hex letter
+ * to count. Two exceptions: full 40-character shas pass as written, and so
+ * does the all-zero null sha (`[0000000]`) — git's own convention, and the
+ * one all-digit token nobody types as a number.
+ */
+function isCitationSha(raw: string): boolean {
+  return raw.length === 40 || /^0+$/.test(raw) || /[a-f]/i.test(raw);
+}
+
 /** Extracts citation tokens from rendered book markdown (appendix links included). */
 export function extractCitations(markdown: string): FoundToken[] {
   const tokens = new Map<string, FoundToken>();
   for (const match of markdown.matchAll(COMMIT_TOKEN)) {
-    const sha = match[1] ?? '';
-    if (!sha) {
+    const raw = match[1] ?? '';
+    const sha = raw.toLowerCase();
+    if (!sha || !isCitationSha(raw)) {
       continue;
     }
+    // deduplicated by the normalized sha, but reported as written
     if (!tokens.has(sha)) {
-      tokens.set(sha, { raw: sha, kind: 'commit', sha });
+      tokens.set(sha, { raw, kind: 'commit', sha });
     }
   }
   for (const match of markdown.matchAll(NUM_TOKEN)) {
@@ -95,27 +110,17 @@ function reposInScope(store: HandoverStore): string[] {
   if (recorded.length > 0) {
     return recorded;
   }
-  const seen = new Set<string>();
-  for (const commit of store.allCommits()) {
-    seen.add(commit.repo);
-  }
-  for (const pr of store.allPullRequests()) {
-    seen.add(pr.repo);
-  }
-  return [...seen];
+  return store.repoKeys();
 }
 
 /** Checks each extracted citation against the index. */
 export function verifyCitations(store: HandoverStore, file: string, markdown: string): VerifyReport {
   const repos = reposInScope(store);
-  const reviews = store.allReviews();
+  // repo / id / pr number only — the inline comment bodies allReviews()
+  // materializes are never read by a citation check.
+  const reviews = store.reviewerRows();
   // Books cite short shas (7 chars); the index stores full ones — match by prefix.
-  const shasByRepo = new Map<string, string[]>();
-  for (const commit of store.allCommits()) {
-    const shas = shasByRepo.get(commit.repo) ?? [];
-    shas.push(commit.sha);
-    shasByRepo.set(commit.repo, shas);
-  }
+  const shasByRepo = store.commitShasByRepo();
   const hasCommitPrefix = (repo: string, short: string): boolean =>
     (shasByRepo.get(repo) ?? []).some((sha) => sha.startsWith(short));
 
@@ -151,8 +156,4 @@ export function verifyCitations(store: HandoverStore, file: string, markdown: st
     okCount: checked.filter((ref) => ref.ok).length,
     missingCount: checked.filter((ref) => !ref.ok).length,
   };
-}
-
-export async function readBookFile(file: string): Promise<string> {
-  return readFile(file, 'utf8');
 }

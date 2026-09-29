@@ -38,16 +38,39 @@ function sleep(ms: number): Promise<void> {
 const TRANSIENT_CODE_RE = /^(ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|UND_ERR|ERR_SOCKET)/;
 const TRANSIENT_MESSAGE_RE = /ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|socket hang up|premature close|fetch failed|network error|timeout/i;
 
+/**
+ * GitHub answers two very different things with a 403. A **secondary** limit says
+ * "slow down" and carries `Retry-After`, so waiting a few seconds genuinely
+ * helps. A **primary** one says the hourly quota is spent (`x-ratelimit-remaining:
+ * 0`, no `Retry-After`) and will not come back until the reset — which is minutes
+ * to hours away, not seconds.
+ *
+ * Retrying the primary case looked harmless until it was measured: each doomed
+ * request costs the full backoff ladder, so a collect that dies on quota takes
+ * four times as long to say so, and every later request pays that again.
+ */
+function isPrimaryRateLimit(error: unknown): boolean {
+  const status = (error as { status?: number }).status ?? 0;
+  if (status !== 403 && status !== 429) {
+    return false;
+  }
+  const headers = (error as { response?: { headers?: Record<string, unknown> } }).response?.headers ?? {};
+  if (Number.isFinite(Number(headers['retry-after'])) && Number(headers['retry-after']) > 0) {
+    return false; // secondary: GitHub told us when to come back
+  }
+  return String(headers['x-ratelimit-remaining'] ?? '') === '0';
+}
+
 /** True for failures worth retrying: abuse limits (403/429), transient 5xx, and connection-level drops. */
-function isRetryable(error: unknown): boolean {
+export function isRetryable(error: unknown): boolean {
   const status = (error as { status?: number }).status ?? 0;
   const message = error instanceof Error ? error.message : String(error);
   if (status === 429 || status >= 500) {
-    return true;
+    return !isPrimaryRateLimit(error);
   }
   // GitHub abuse detection ("You have triggered an abuse detection mechanism") often comes with Retry-After
   if (status === 403 && /rate limit|secondary rate|abuse/i.test(message)) {
-    return true;
+    return !isPrimaryRateLimit(error);
   }
   // A missing HTTP status means the request failed below the HTTP layer
   // (ECONNRESET, ETIMEDOUT, DNS, socket hang up) — the most common transient
@@ -99,15 +122,29 @@ export function parseRepoSlug(fullName: string): RepoSlug {
 }
 
 /** Adds a hint for the two failures users actually hit: bad token and rate limits. */
-function explainGitHubError(error: unknown): Error {
+export function explainGitHubError(error: unknown, tokenWasProvided = true): Error {
   const status = (error as { status?: number }).status;
   const message = error instanceof Error ? error.message : String(error);
   if (status === 401) {
-    return new Error(`GitHub rejected the credentials (401) — check that GITHUB_TOKEN is valid. (${message})`);
+    // Telling someone to check a token they never set sends them to the wrong
+    // door; the useful half of that sentence is which door to go to.
+    return new Error(
+      tokenWasProvided
+        ? `GitHub rejected the credentials (401) — check that GITHUB_TOKEN is valid. (${message})`
+        : `GitHub refused the request (401) and no GITHUB_TOKEN is set, so this could not be retried anonymously — set GITHUB_TOKEN to collect it. (${message})`,
+    );
   }
   if (status === 403 && /rate limit/i.test(message)) {
+    // GitHub already told us when the quota comes back; without that the only
+    // thing a person can do is guess whether to wait or go set up a token.
+    const headers = (error as { response?: { headers?: Record<string, unknown> } }).response?.headers ?? {};
+    const reset = Number(headers['x-ratelimit-reset']);
+    const wait =
+      Number.isFinite(reset) && reset > 0
+        ? ` The anonymous quota resets at ${new Date(reset * 1000).toISOString()} (UTC).`
+        : '';
     return new Error(
-      `GitHub rate limit exceeded (403). Set GITHUB_TOKEN to raise the limit from 60 to 5000 requests/hour. (${message})`,
+      `GitHub rate limit exceeded (403). Set GITHUB_TOKEN to raise the limit from 60 to 5000 requests/hour.${wait} (${message})`,
     );
   }
   return error instanceof Error ? error : new Error(message);
@@ -118,12 +155,46 @@ function explainGitHubError(error: unknown): Error {
  * the team-wide activity needed to compute sole-contribution ratios (§3.4).
  * Everything lands in the SQLite index so second runs are near-instant.
  */
+/** Default per-request timeout: a hung connection must not stall a multi-hour collect. */
+const REQUEST_TIMEOUT_MS = 60_000;
+
+/**
+ * A fetch that gives up on one attempt. Overridable for a slow Enterprise
+ * instance — and, more to the point, so a test can exercise the abort path in
+ * milliseconds instead of waiting a minute for it.
+ */
+function makeTimeoutFetch(timeoutMs: number) {
+  return function timeoutFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+    return fetch(input, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  };
+}
+
 export class GitHubCollector {
   private readonly octokit: Octokit;
   private readonly octokitTokenWasProvided: boolean;
 
-  constructor(token: string, octokit?: Octokit) {
+  constructor(token: string, octokit?: Octokit, options: { baseUrl?: string; timeoutMs?: number } = {}) {
     this.octokitTokenWasProvided = token.trim().length > 0;
+    if (options.baseUrl && !octokit) {
+      // Library callers bypass loadConfig, and this is where the token goes —
+      // refuse the plainly unsafe before Octokit ever sees it. (The stricter
+      // host allow-listing for GITHUB_API_URL stays in config.parseGitHubApiUrl;
+      // loopback http is allowed so tests can exercise the collector against a
+      // local server.)
+      let url: URL;
+      try {
+        url = new URL(options.baseUrl);
+      } catch {
+        throw new Error(`GitHubCollector baseUrl "${options.baseUrl}" is not a valid URL`);
+      }
+      const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname.toLowerCase());
+      if (url.protocol !== 'https:' && !loopback) {
+        throw new Error(`GitHubCollector baseUrl must use https (got "${url.protocol}//${url.host}") — the GitHub token would be sent in the clear`);
+      }
+      if (url.username || url.password) {
+        throw new Error('GitHubCollector baseUrl must not embed credentials');
+      }
+    }
     this.octokit =
       octokit ??
       new Octokit({
@@ -131,7 +202,9 @@ export class GitHubCollector {
         userAgent: 'handover-book',
         // GitHub Enterprise Server: GITHUB_API_URL is the variable GitHub's own
         // Actions runtime sets, so CI-picked-up config "just works" locally too.
-        ...(process.env.GITHUB_API_URL ? { baseUrl: process.env.GITHUB_API_URL } : {}),
+        // The host is allow-listed before use — this is where the token goes.
+        ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
+        request: { fetch: makeTimeoutFetch(options.timeoutMs ?? REQUEST_TIMEOUT_MS) },
       });
     this.installRequestBackoff();
   }
@@ -181,7 +254,7 @@ export class GitHubCollector {
     try {
       return await this.collectIntoInner(store, username, repos, options);
     } catch (error) {
-      throw explainGitHubError(error);
+      throw explainGitHubError(error, this.octokitTokenWasProvided);
     }
   }
 
@@ -206,9 +279,10 @@ export class GitHubCollector {
       skippedIssues: 0,
     };
 
-    // Clear orphan data from repos not in the current collection scope. Repos
-    // collected from other sources (local git dirs, collected later in the same
-    // run) must be part of that scope or their rows are wiped with no warning.
+    // Clear orphan data from repos not in the current collection scope — but
+    // only after a successful collect (see below). Repos collected from other
+    // sources (local git dirs, collected later in the same run) must be part of
+    // that scope or their rows are wiped with no warning.
     // Repo rows are keyed by the lowercased slug, so the scope must be
     // normalized the same way — SQLite's NOT IN is case-sensitive, and a
     // mixed-case `-r Acme/API` would otherwise wipe everything collected as
@@ -222,7 +296,6 @@ export class GitHubCollector {
       ),
     ];
     const preserveRepos = options.preserveRepos ?? [];
-    store.clearRepositoriesExcept([...scope, ...preserveRepos]);
 
     for (const fullName of scope) {
       const { owner, repo } = parseRepoSlug(fullName);
@@ -236,6 +309,21 @@ export class GitHubCollector {
         store.setMeta(codeownersMetaKey(name), codeowners);
       }
     }
+
+    // The deletion is last, not first: a collect that throws on the fortieth
+    // request had already destroyed every repository the command line did not
+    // name, so the user lost data and gained nothing. Nothing downstream reads
+    // the index mid-loop, so the outcome for a successful run is unchanged.
+    // Say what is being removed: a narrowed `-r` scope deletes repos that a
+    // local-only user may not be able to re-collect, and silence made that
+    // loss invisible until the rendered book quietly got thinner.
+    const keep = new Set([...scope, ...preserveRepos]);
+    for (const repo of store.repoKeys()) {
+      if (!keep.has(repo)) {
+        progress(`warning: removing ${repo} from the index — it is no longer in the collection scope. Include it with -r to keep its data.`);
+      }
+    }
+    store.clearRepositoriesExcept([...scope, ...preserveRepos]);
 
     store.setMeta('last_collected_at', new Date().toISOString());
     store.setMeta('collected_for', login);
@@ -268,7 +356,8 @@ export class GitHubCollector {
    * CODEOWNERS" would make ownership data vanish mid-run.
    */
   private async fetchCodeowners(owner: string, repo: string, onProgress?: (message: string) => void): Promise<string | null> {
-    for (const candidate of ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS']) {
+    // Same precedence as GitHub's own CODEOWNERS lookup: root, .github/, docs/.
+    for (const candidate of ['CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS']) {
       try {
         const response = await this.octokit.rest.repos.getContent({ owner, repo, path: candidate });
         const data = response.data as { content?: string; encoding?: string };
@@ -316,7 +405,11 @@ export class GitHubCollector {
       }
       return;
     }
-    for await (const { data } of this.octokit.paginate.iterator(this.octokit.rest.issues.list, {
+    // `issues.list` is GET /issues — "issues assigned to the authenticated user
+    // across every repository they can see", which ignores owner/repo, returns
+    // 401 unauthenticated, and silently collects the wrong person's data with a
+    // token. The repo-scoped endpoint is listForRepo.
+    for await (const { data } of this.octokit.paginate.iterator(this.octokit.rest.issues.listForRepo, {
       owner,
       repo,
       state: 'all',

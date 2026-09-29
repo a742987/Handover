@@ -1,5 +1,6 @@
 import { marked } from 'marked';
 import type { HandoverBook } from '../types.js';
+import { decodeHtmlEntities, isSafeUrl } from './escape.js';
 
 const STYLE = `
   :root { color-scheme: light; }
@@ -23,69 +24,12 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!);
 }
 
-/** Numeric character references outside Unicode are invalid — clamp instead of
- * letting String.fromCodePoint throw a RangeError that aborts the whole render. */
-function fromCodePoint(code: number): string {
-  return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '\uFFFD';
-}
-
-/**
- * Named entities that can produce a scheme colon or smuggle whitespace past a
- * URL check. Unknown named entities stay literal — without a decoded `:` they
- * cannot form a URL scheme, which is the only thing the scheme check cares
- * about.
- */
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: '&',
-  lt: '<',
-  gt: '>',
-  quot: '"',
-  apos: "'",
-  colon: ':',
-  sol: '/',
-  bsol: '\\',
-  Tab: '\t',
-  NewLine: '\n',
-};
-
-function decodeHtmlEntities(value: string): string {
-  const once = (input: string): string =>
-    input
-      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => fromCodePoint(parseInt(hex, 16)))
-      .replace(/&#(\d+);/g, (_, dec: string) => fromCodePoint(Number(dec)))
-      .replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, (match, name: string) => NAMED_ENTITIES[name] ?? match);
-  // double-encoded payloads ("&amp;#106;avascript:") need a second pass to be
-  // recognizable as the scheme they really are
-  let out = value;
-  for (let i = 0; i < 3; i += 1) {
-    const next = once(out);
-    if (next === out) {
-      break;
-    }
-    out = next;
-  }
-  return out;
-}
-
-/**
- * Scheme allowlist. A denylist after partial decoding cannot enumerate what
- * browsers accept (`javascript&colon;`, entity-encoded tabs inside the scheme
- * word…), so the check is inverted: after decoding entities and stripping the
- * whitespace/control bytes browsers drop from URLs, ANY explicit scheme is
- * rejected unless it is explicitly safe.
- */
-function isSafeUrl(decoded: string): boolean {
-  const stripped = decoded.replace(/[\t\n\r\x00-\x20]/g, '').toLowerCase();
-  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(stripped);
-  if (!scheme) {
-    return true; // relative URL or fragment
-  }
-  return (scheme[1] === 'http' || scheme[1] === 'https' || scheme[1] === 'mailto');
-}
-
 const DANGEROUS_ELEMENTS = /\s*<(script|style|iframe|object|embed|form|link|meta|base|animate|set|foreignobject)\b[\s\S]*?<\/\1\s*>\s*/gi;
 const DANGEROUS_ELEMENTS_OPEN = /<(script|style|iframe|object|embed|form|link|meta|base|animate|set|foreignobject)\b[^>]*\/?>/gi;
-const EVENT_ATTRIBUTES = /\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
+// `[\s/]+` also matches the `<img/onerror=…>` spelling that hides an event
+// handler from a whitespace-only boundary check. marked renders that shape as
+// text today, but the sanitizer is the last line, not the first.
+const EVENT_ATTRIBUTES = /[\s/]+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
 const URL_ATTRIBUTES = /(\s+(?:xlink:)?(?:href|src|action|formaction)\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
 
 /**

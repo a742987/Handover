@@ -55,6 +55,11 @@ export function searchIndex(store: HandoverStore, filter: SearchFilter = {}): { 
   const limit = Math.max(1, Math.min(200, filter.limit ?? 20));
   const items: SearchResultItem[] = [];
 
+  // Timestamps, not string compares: indexed dates carry no milliseconds
+  // ("…:00Z") while a since value normalizes to "…:00.000Z", and "Z" > "." in
+  // lexicographic order — a record at exactly the boundary would slip in.
+  const sinceMs = filter.since ? Date.parse(filter.since) : Number.NaN;
+
   const matches = (text: string, when: string | null, who: string): boolean => {
     if (author && who.toLowerCase() !== author) {
       return false;
@@ -62,8 +67,14 @@ export function searchIndex(store: HandoverStore, filter: SearchFilter = {}): { 
     // A since-restricted query can only return provably in-window items —
     // records without a usable date (pending reviews, unknown commit dates)
     // must not slip through on a null comparison.
-    if (filter.since && (!when || when < filter.since)) {
-      return false;
+    if (Number.isFinite(sinceMs)) {
+      if (!when) {
+        return false;
+      }
+      const whenMs = Date.parse(when);
+      if (!Number.isFinite(whenMs) || whenMs < sinceMs) {
+        return false;
+      }
     }
     if (query && !text.toLowerCase().includes(query)) {
       return false;
@@ -84,7 +95,7 @@ export function searchIndex(store: HandoverStore, filter: SearchFilter = {}): { 
   };
 
   if (kind === 'all' || kind === 'commit') {
-    for (const commit of store.allCommits()) {
+    for (const commit of store.iterCommitDigests()) {
       if (!repoAllowed(commit.repo) || !matches(commit.message, commit.authoredAt, commit.authorLogin)) {
         continue;
       }

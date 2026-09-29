@@ -29,8 +29,10 @@ export interface BusFactorItem {
 /**
  * Team-level view of the same evidence the risk engine uses: for every module,
  * how many people actually commit to it and how concentrated that is.
- * critical = exactly one author ever; fragile = two authors and the top one
- * holds ≥70% of the commits.
+ * critical = exactly one author ever; fragile = two authors with the top one
+ * holding ≥70% of the commits, or 3+ authors where the top one still holds
+ * ≥90% — "three names in the log" is not coverage when one of them wrote
+ * almost all of it.
  */
 export function computeBusFactor(store: HandoverStore, options: BusFactorOptions = {}): BusFactorItem[] {
   const now = options.now ?? new Date();
@@ -45,7 +47,7 @@ export function computeBusFactor(store: HandoverStore, options: BusFactorOptions
   const modules = new Map<string, Acc>();
   const rulesByRepo = new Map<string, ReturnType<typeof parseCodeowners>>();
 
-  for (const commit of store.allCommits()) {
+  for (const commit of store.iterCommits()) {
     if (commit.authorLogin === 'unknown' || isBotLogin(commit.authorLogin)) {
       continue;
     }
@@ -73,7 +75,10 @@ export function computeBusFactor(store: HandoverStore, options: BusFactorOptions
 
   const items: BusFactorItem[] = [];
   for (const [key, acc] of modules) {
-    const repo = key.slice(0, key.indexOf(':')) || key;
+    // indexOf without the `|| key` fallback: on a key with no colon it returns
+    // -1 and slice(0, -1) would silently truncate the last character.
+    const colon = key.indexOf(':');
+    const repo = colon === -1 ? key : key.slice(0, colon);
     let topAuthor = '';
     let topCount = 0;
     for (const [author, count] of acc.byAuthor) {
@@ -90,7 +95,11 @@ export function computeBusFactor(store: HandoverStore, options: BusFactorOptions
     }
     const share = acc.total > 0 ? topCount / acc.total : 0;
     const status: BusFactorStatus =
-      acc.byAuthor.size <= 1 ? 'critical' : acc.byAuthor.size === 2 && share >= 0.7 ? 'fragile' : 'shared';
+      acc.byAuthor.size <= 1
+        ? 'critical'
+        : (acc.byAuthor.size === 2 && share >= 0.7) || (acc.byAuthor.size >= 3 && share >= 0.9)
+          ? 'fragile'
+          : 'shared';
     items.push({
       module: key,
       distinctAuthors: acc.byAuthor.size,

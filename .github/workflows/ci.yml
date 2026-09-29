@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+# Nothing here talks to a registry or a deployment: the default token is read-only.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -20,8 +24,12 @@ jobs:
         node-version: [22, 24]
         os: [ubuntu-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # Pinned to a full commit SHA (verified against the upstream tag refs on
+      # 2026-09-29). A mutable version tag means a compromised upstream action
+      # runs in this job; Dependabot's github-actions ecosystem moves the SHA
+      # and the version comment together, so pinning does not mean falling behind.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ matrix.node-version }}
           cache: npm
@@ -29,3 +37,173 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+
+  # The book is the product and its renderer is the security boundary: a build
+  # that fails, a dependency with a shipped exploit, or an entry point that is
+  # missing from the tarball are all release blockers, not advice.
+  release-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Dependency vulnerabilities (high and above block)
+        run: npm audit --audit-level=high
+
+      - name: Install scripts are limited to known build tools
+        run: |
+          node -e '
+            const lock = require("./package-lock.json");
+            const allowed = new Set(["esbuild", "fsevents"]);
+            const flagged = Object.keys(lock.packages || {})
+              .filter((k) => lock.packages[k].hasInstallScript)
+              .map((k) => k.split("node_modules/").pop());
+            const unexpected = flagged.filter((name) => !allowed.has(name));
+            if (unexpected.length) {
+              console.error("new package with an install script:", unexpected.join(", "));
+              process.exit(1);
+            }
+            console.log("install scripts:", flagged.join(", ") || "none");
+          '
+
+      - run: npm run build
+
+      - name: Build the tarball the release would publish
+        run: |
+          set -euo pipefail
+          # $RUNNER_TEMP, not /tmp: it is the directory the runner guarantees to
+          # be writable and never shared with another job.
+          rm -rf "$RUNNER_TEMP/pack"
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack" >/dev/null
+          tar xzf "$RUNNER_TEMP"/pack/*.tgz -C "$RUNNER_TEMP/pack"
+          echo "packed: $(basename "$RUNNER_TEMP"/pack/*.tgz)"
+
+      - name: Audit the tarball (entries present, no local data)
+        run: |
+          set -euo pipefail
+          # one script rather than two run: blocks: the shell version reported
+          # "clean" when tar could not open the file at all, and misbehaved when
+          # the glob matched more than one archive
+          node scripts/check-package.mjs "$RUNNER_TEMP"/pack/*.tgz
+
+  # The unit suite runs against source. Four separate defects surfaced only when
+  # someone executed the *packed artifact* (rounds ㉕–㉗ of the audit), so that
+  # execution is now a gate rather than a one-off: install the tarball into a throwaway
+  # directory, drive every CLI command and the MCP server against a synthetic
+  # repository, and assert exit statuses, output wording, files written, and that no
+  # command leaks a terminal control byte. Both operating systems, because one of
+  # those defects (a runtime abort on process.exit) was Windows-only.
+  artifact-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - name: Install the tarball and run every entry point against it
+        run: node scripts/smoke.mjs --pack
+
+  # examples/ is copied verbatim into other people's repositories, so a weakness
+  # there is worth more than a review comment: it needs a gate. This one checks
+  # the property the sole-owner example used to violate — building this repo's
+  # moving `main` inside a pull request that also holds a GitHub token.
+  shipped-examples:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Example workflow installs a pinned release, not a moving clone
+        run: |
+          set -euo pipefail
+          example=examples/sole-owner-gate-action.yml
+          if grep -qE 'git clone [^#]*Handover\.git' "$example"; then
+            echo "$example clones the repository: whoever takes over main then runs code in the copying team's CI, with their PAT in the environment." >&2
+            exit 1
+          fi
+          grep -qE 'handover-book@\$?\{?=?"?HANDOVER_VERSION' "$example" || {
+            echo "$example must install an explicitly pinned handover-book version" >&2
+            exit 1
+          }
+          grep -q -- '--ignore-scripts' "$example" || {
+            echo "$example should not execute dependency install scripts on someone else's runner" >&2
+            exit 1
+          }
+          echo "example workflow is pinned"
+
+      - name: No privileged triggers, no event data inside run blocks
+        run: |
+          set -euo pipefail
+          # a trigger is a mapping key under on:, so this cannot match the
+          # wording of a comment or of this check itself
+          if grep -rnE '^[[:space:]]*pull_request_target:' .github/workflows/; then
+            echo "a workflow triggers on pull_request_target — base-branch code with a write token" >&2
+            exit 1
+          fi
+          # A github.event / github.payload / inputs expression is attacker-controlled
+          # on a pull request. It must never reach a shell command: pass it through
+          # an env: mapping instead, so the value is data, not template text.
+          #
+          # The token is assembled at runtime because this check would otherwise
+          # match its own run block.
+          run_lines="$(
+            for wf in .github/workflows/*.yml; do
+              awk -v f="$wf" '
+                { indent = 0; while (substr($0, indent + 1, 1) == " ") indent++ }
+                inblock == 0 && /^[ ]*(-[ ]*)?run:[ ]*[|>]/ { inblock = 1; base = indent; next }
+                inblock == 1 {
+                  if ($0 ~ /^[ ]*$/) { next }
+                  if (indent <= base) { inblock = 0 }
+                  else { print f ": " $0 }
+                }
+              ' "$wf"
+            done
+          )"
+          dollar='$'
+          if printf '%s\n' "$run_lines" | grep -Fn "${dollar}{{"; then
+            echo "expression interpolation found inside a run: block (above) — pass it through env: instead" >&2
+            exit 1
+          fi
+          echo "no privileged triggers; run blocks take data only through env"
+
+      - name: Third-party actions are pinned to commit SHAs
+        run: |
+          set -euo pipefail
+          # A mutable action tag (actions/checkout@v4) can be re-pointed upstream;
+          # a commit SHA cannot. Dependabot's github-actions ecosystem bumps the
+          # SHA and the trailing version comment together, so this stays current.
+          unpinned="$(
+            grep -rhnE '^[[:space:]]*-?[[:space:]]*uses:[[:space:]]*[^ ]+' .github/workflows/ examples/ \
+              | grep -vE 'uses:[[:space:]]*\.{0,2}/' \
+              | grep -vE 'uses:[[:space:]]*[^[:space:]]+@[0-9a-f]{40}([[:space:]]|#)' \
+              || true
+          )"
+          if [ -n "$unpinned" ]; then
+            echo "actions referenced by a mutable tag instead of a commit SHA:" >&2
+            echo "$unpinned" >&2
+            exit 1
+          fi
+          count="$(grep -rhoE 'uses:[[:space:]]*[^ ]+@[0-9a-f]{40}' .github/workflows/ examples/ | wc -l | tr -d ' ')"
+          echo "all $count third-party action references are SHA-pinned"
+
+      - name: Every workflow declares least-privilege permissions
+        run: |
+          set -euo pipefail
+          for wf in .github/workflows/*.yml; do
+            grep -q '^permissions:' "$wf" || { echo "$wf has no permissions: block (defaults may be broader than needed)" >&2; exit 1; }
+          done
+          echo "permissions declared in all workflows"

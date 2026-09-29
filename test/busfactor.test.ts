@@ -40,6 +40,51 @@ legacy/**         @carol
   it('returns nothing when no rule matches', () => {
     expect(ownersFor(parseCodeowners('/only-deep/** @x'), 'top.ts')).toEqual([]);
   });
+
+  it('matches the shapes real CODEOWNERS files use, unchanged by the rewrite', () => {
+    // The regex→DP rewrite was checked against the previous implementation over
+    // a corpus of patterns × paths; these are the cases that corpus flagged as
+    // load-bearing, kept as an executable contract so a future matcher change
+    // cannot quietly re-drop one of them.
+    const dirName = parseCodeowners('docs @w');
+    expect(ownersFor(dirName, 'docs/README.md')).toEqual(['@w']);       // bare directory rule
+    expect(ownersFor(dirName, 'a/b/docs/x.md')).toEqual(['@w']);        // …at any depth
+    expect(ownersFor(dirName, 'other/x.ts')).toEqual([]);               // and nothing else
+
+    const ext = parseCodeowners('*.ts @t');
+    expect(ownersFor(ext, 'src/a/b.ts')).toEqual(['@t']);
+    expect(ownersFor(ext, 'src/a/b.tsx')).toEqual([]);                  // `*` must not cross the suffix
+
+    const scoped = parseCodeowners('src/*/internal/** @s');
+    expect(ownersFor(scoped, 'src/a/internal/deep/f.go')).toEqual(['@s']);
+    expect(ownersFor(scoped, 'src/a/b/internal/f.go')).toEqual([]);
+  });
+
+  it('`**/name` now also matches the repository root — deliberate, gitignore-conformant', () => {
+    // The regex this replaces translated `**/README.md` into `(?:.*/)?…`, which
+    // required at least one directory level, so it missed the root file. `**`
+    // matches zero segments.
+    const rules = parseCodeowners('**/README.md @d');
+    expect(ownersFor(rules, 'README.md')).toEqual(['@d']);
+    expect(ownersFor(rules, 'a/b/README.md')).toEqual(['@d']);
+  });
+
+  it('refuses a wildcard bomb instead of backtracking forever', () => {
+    // Both halves of this are repo-supplied: the CODEOWNERS line and the file
+    // path it is matched against. Translating them into a regex made a
+    // non-matching pair cost exponential time (a 36-char line hung ~7s, a
+    // 40-char one ~20s), which is a denial of service against `handover
+    // bus-factor` run on somebody else's repository.
+    const bomb = parseCodeowners(`${'*a'.repeat(40)} @evil`);
+    expect(ownersFor(bomb, `${'a'.repeat(60)}b`)).toEqual([]);
+    const repeated = parseCodeowners(`${'*'.repeat(30)} @evil`);
+    expect(ownersFor(repeated, 'a/b/c/d/e/f/g/h')).toEqual([]);
+  });
+
+  it('still matches a pathological-looking rule that stays under the bound', () => {
+    const rules = parseCodeowners('*a*b @acme/ok');
+    expect(ownersFor(rules, 'xxa_yyb')).toEqual(['@acme/ok']);
+  });
 });
 
 function commit(sha: string, author: string, path: string): CommitRecord {

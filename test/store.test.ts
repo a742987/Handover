@@ -88,6 +88,28 @@ describe('HandoverStore', () => {
     expect(store.allCommits()[0]?.files).toHaveLength(1);
   });
 
+  it('keys rows identically when a repo key carries invisible characters', () => {
+    // A local clone directory basename becomes the repo key, and a filesystem
+    // allows invisible characters in one. Inserts store the sanitized key — if
+    // the deletes and lookups compare the raw one, children orphan and a scoped
+    // clear wipes the repo it was told to keep.
+    const store = HandoverStore.inMemory();
+    const dirty = 'weird\u200bname';
+    const clean = 'weirdname';
+    const sha = 'd'.repeat(40);
+    store.upsertCommit({ ...commit(sha, 'alice', '2026-09-01T00:00:00Z', ['src/a.ts']), repo: dirty });
+    expect(store.hasCommit(dirty, sha)).toBe(true);
+    expect(store.repoKeys()).toEqual([clean]);
+    // a re-upsert must replace the child rows, not strand them
+    store.upsertCommit({ ...commit(sha, 'alice', '2026-09-01T00:00:00Z', ['src/b.ts']), repo: dirty });
+    expect(store.allCommits()[0]?.files.map((file) => file.path)).toEqual(['src/b.ts']);
+    // scope checks must recognize the repo under either spelling
+    store.clearRepositoriesExcept([dirty]);
+    expect(store.repoKeys()).toEqual([clean]);
+    store.clearRepositoriesExcept(['something-else']);
+    expect(store.repoKeys()).toEqual([]);
+  });
+
   it('round-trips reviews with inline comments', () => {
     const store = HandoverStore.inMemory();
     const review: ReviewRecord = {
@@ -356,5 +378,120 @@ describe('ghost-data pruning', () => {
     store.pruneIssuesNotSeen(REPO, [10]);
     expect(store.allIssues().map((entry) => entry.number)).toEqual([10, 12]);
     expect(store.allIssues().find((entry) => entry.number === 10)?.comments).toHaveLength(1);
+  });
+});
+
+describe('streaming and aggregate readers', () => {
+  /** The risk engine, bus factor, module stats and search were switched from
+   * allCommits() to one-commit-at-a-time readers. Same order, same content, or
+   * the ownership arithmetic silently changes. */
+  function seeded(): HandoverStore {
+    const store = HandoverStore.inMemory();
+    const authors = ['alice', 'bob', 'unknown', 'dependabot[bot]'];
+    let n = 0;
+    for (const repo of ['acme/api', 'acme/web']) {
+      for (const author of authors) {
+        for (let i = 0; i < 4; i += 1) {
+          n += 1;
+          store.upsertCommit({
+            sha: String(n).padStart(40, '0'),
+            repo,
+            authorLogin: author,
+            authoredAt: `2026-0${(n % 9) + 1}-1${n % 9}T00:00:00Z`,
+            message: `commit ${n} on ${repo}`,
+            additions: n,
+            deletions: 1,
+            files: [
+              { path: `src/mod${n % 3}/a.ts`, additions: n, deletions: 0 },
+              { path: `README.md`, additions: 1, deletions: 1 },
+            ],
+          });
+        }
+      }
+    }
+    return store;
+  }
+
+  it('iterCommits yields exactly what allCommits returns, in the same order', () => {
+    const store = seeded();
+    const materialized = store.allCommits();
+    const streamed = [...store.iterCommits()];
+    expect(streamed).toEqual(materialized);
+    expect(streamed.length).toBe(32);
+  });
+
+  it('iterCommitDigests carries the search columns and no file rows', () => {
+    const store = seeded();
+    const digests = [...store.iterCommitDigests()];
+    expect(digests.map((row) => row.sha)).toEqual(store.allCommits().map((commit) => commit.sha));
+    expect(Object.keys(digests[0]!).sort()).toEqual(['authorLogin', 'authoredAt', 'message', 'repo', 'sha']);
+  });
+
+  it('commitCoverage aggregates the same numbers the in-memory loop produced', () => {
+    const store = seeded();
+    const commits = store.allCommits();
+    const contributors = new Set(
+      commits.map((commit) => commit.authorLogin).filter((login) => login !== 'unknown' && !login.endsWith('[bot]')),
+    );
+    const stats = store.commitCoverage();
+    expect(stats.commits).toBe(commits.length);
+    expect(stats.unattributed).toBe(commits.filter((commit) => commit.authorLogin === 'unknown').length);
+    expect(stats.contributors).toBe(contributors.size);
+    const minOf = (pick: (commit: CommitRecord) => string): string | null =>
+      commits.reduce<string | null>((best, commit) => (best === null || pick(commit) < best ? pick(commit) : best), null);
+    const maxOf = (pick: (commit: CommitRecord) => string): string | null =>
+      commits.reduce<string | null>((best, commit) => (best === null || pick(commit) > best ? pick(commit) : best), null);
+    expect(stats.from).toBe(minOf((commit) => commit.authoredAt));
+    expect(stats.to).toBe(maxOf((commit) => commit.authoredAt));
+  });
+
+  it('repoKeys spans commits and pull requests', () => {
+    const store = seeded();
+    store.upsertPullRequest({
+      repo: 'acme/ops', number: 1, title: 't', authorLogin: 'alice', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', mergedAt: null, body: '', additions: 0, deletions: 0, changedFiles: 0,
+    });
+    expect(store.repoKeys()).toEqual(['acme/api', 'acme/ops', 'acme/web']);
+  });
+
+  it('lightweight review/label/count readers agree with the full ones', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertPullRequest({
+      repo: REPO, number: 7, title: 'settle', authorLogin: 'alice', state: 'closed',
+      createdAt: '2026-09-01T00:00:00Z', mergedAt: '2026-09-02T00:00:00Z', body: 'why',
+      additions: 2, deletions: 1, changedFiles: 1,
+    });
+    store.upsertReview({
+      repo: REPO, id: 101, prNumber: 7, reviewerLogin: 'bob', state: 'APPROVED',
+      submittedAt: '2026-09-02T00:00:00Z', body: 'lgtm',
+      comments: [{ id: 5, reviewId: 101, path: 'payments/x.ts', body: 'a very long comment body', authorLogin: 'bob' }],
+    });
+    store.upsertIssue({
+      repo: REPO, number: 9, title: 'double charge', authorLogin: 'carol', state: 'closed',
+      createdAt: '2026-09-01T00:00:00Z', closedAt: null, labels: ['bug', 'regression'],
+      comments: [{ id: 7, number: 9, authorLogin: 'carol', createdAt: '2026-09-01T00:00:00Z', body: 'saw it twice' }],
+      isPullRequest: false,
+    });
+    store.addAnswer('q', 'a', '2026-09-03T00:00:00Z');
+
+    // reviewerRows: same rows, same order, minus the comment payloads
+    const rows = store.reviewerRows();
+    expect(rows).toEqual(store.allReviews().map((review) => ({
+      repo: review.repo, id: review.id, prNumber: review.prNumber, reviewerLogin: review.reviewerLogin,
+    })));
+    expect(rows[0]).not.toHaveProperty('comments');
+
+    expect(store.issueLabelRows()).toEqual([
+      { repo: REPO, number: 9, label: 'bug' },
+      { repo: REPO, number: 9, label: 'regression' },
+    ]);
+
+    // recordCounts: exactly what counting the materialized rows produced
+    const counts = store.recordCounts();
+    expect(counts.pullRequests).toBe(store.allPullRequests().length);
+    expect(counts.reviews).toBe(store.allReviews().length);
+    expect(counts.issues).toBe(store.allIssues().length);
+    expect(counts.comments).toBe(store.allIssues().reduce((sum, issue) => sum + issue.comments.length, 0));
+    expect(counts.capturedAnswers).toBe(store.listAnswers().length);
   });
 });

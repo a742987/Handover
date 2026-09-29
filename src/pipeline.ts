@@ -3,11 +3,13 @@ import path from 'node:path';
 import { sameLogin } from './identity.js';
 import type { HandoverBook, RiskItem } from './types.js';
 import { loadConfig, type HandoverConfig, type LlmProviderName } from './config.js';
+import { parseUsername } from './args.js';
 import { HandoverStore } from './store/sqlite.js';
+import { requireIndex } from './store/index-check.js';
 import { GitHubCollector, countCollected } from './collect/github.js';
-import { GitDirectoryCollector, previewLocalRepoKeys, recordedLocalRepoKeys } from './collect/git.js';
+import { GitDirectoryCollector, previewLocalRepoKeys, recordedLocalRepoKeys, resolveToplevel } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
-import { synthesizeChapters } from './distill/synthesize.js';
+import { synthesizeChapters, DIGEST_CHAR_BUDGET } from './distill/synthesize.js';
 import { createProvider, type LlmProvider } from './distill/llm.js';
 import { buildActions, buildCoverage } from './report/summary.js';
 import { renderBook } from './render/markdown.js';
@@ -28,11 +30,11 @@ export interface GenerateOptions {
   model?: string;
   since?: string;
   refresh?: boolean;
-  /** override HANDOVER_REDACT for this run */
+  /** override the default-on secret scrubbing for this run */
   redact?: boolean;
   /** also write a print-ready single-file HTML twin of the book */
   html?: boolean;
-  /** force deterministic synthesis even when an LLM credential is configured (HANDOVER_NO_LLM=1 works too) */
+  /** skip LLM synthesis (the default); set false only via --use-llm / HANDOVER_LLM=1 */
   noLlm?: boolean;
   onProgress?: (message: string) => void;
 }
@@ -57,14 +59,38 @@ function dbPathFor(config: HandoverConfig, username: string): string {
 /** Resolve the LLM provider; a missing credential degrades to deterministic synthesis. */
 function tryCreateProvider(config: HandoverConfig, onProgress: (message: string) => void): LlmProvider | null {
   if (config.noLlm) {
-    onProgress('LLM synthesis disabled (--no-llm / HANDOVER_NO_LLM); chapters 4-6 will use deterministic fallbacks. Nothing leaves this machine.');
+    onProgress('LLM synthesis disabled (--no-llm is the default; enable with --use-llm or HANDOVER_LLM=1); chapters 4-6 use deterministic fallbacks. Nothing leaves this machine.');
     return null;
   }
   try {
-    return createProvider(config);
+    const provider = createProvider(config);
+    // Explicit consent record: the flag is opt-in, but say what it now does.
+    onProgress(
+      `LLM synthesis enabled — sending the collected evidence digest (up to ${DIGEST_CHAR_BUDGET.toLocaleString()} characters) to ${provider.name}/${provider.model}. Known secret formats are scrubbed from it on the way out; \`--no-redact\` / HANDOVER_NO_REDACT=1 turns that off, which only makes sense if you know this history is clean.`,
+    );
+    return provider;
   } catch (error) {
     onProgress(`LLM synthesis disabled (${error instanceof Error ? error.message : String(error)}); chapters 4-6 will use deterministic fallbacks.`);
     return null;
+  }
+}
+
+/**
+ * Warn when the index and the generated book land inside a git working tree:
+ * they hold verbatim commit messages, PR bodies and review text from the
+ * analysed repositories, and a data dir outside the repo's own .gitignore is a
+ * realistic way to commit them by accident.
+ */
+async function warnIfInsideWorkTree(dataDir: string, onProgress: (message: string) => void): Promise<void> {
+  try {
+    const top = await resolveToplevel(path.resolve(dataDir));
+    if (top) {
+      onProgress(
+        `warning: "${dataDir}" is inside the git working tree ${top} — the SQLite index and the book quote repository content verbatim. Keep handover-data/ out of commits (add it to .gitignore) or pass --data-dir outside the repo.`,
+      );
+    }
+  } catch {
+    // the warning is best-effort; never fail a run over it
   }
 }
 
@@ -119,11 +145,16 @@ async function finishFromStore(
 
 /** Full run: collect → index → risk → synthesis → rendered book. */
 export async function generateHandoverBook(options: GenerateOptions): Promise<GenerateResult> {
+  // Library callers bypass the CLI/MCP argument parsers, and the index file and
+  // book file names derive from the username — validate at this boundary too,
+  // or "../.." would write outside the data directory.
+  const username = parseUsername(options.username);
   const config = loadConfig({
     githubToken: options.githubToken,
     provider: options.provider,
     model: options.model,
     dataDir: options.dataDir,
+    redact: options.redact,
     noLlm: options.noLlm,
   });
   const onProgress = options.onProgress ?? (() => {});
@@ -133,10 +164,11 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
     throw new Error('Nothing to collect — pass at least one -r owner/name (GitHub) or --git-dir <clone> (local).');
   }
   await mkdir(config.dataDir, { recursive: true });
+  await warnIfInsideWorkTree(config.dataDir, onProgress);
 
-  const store = new HandoverStore(dbPathFor(config, options.username));
+  const store = new HandoverStore(dbPathFor(config, username));
   try {
-    let display = options.username;
+    let display = username;
     let collectedTotal = 0;
     const scope = [...repos];
 
@@ -152,9 +184,9 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
     ];
 
     if (repos.length > 0) {
-      onProgress(`Collecting GitHub history for @${options.username} …`);
-      const collector = new GitHubCollector(config.githubToken);
-      const collected = await collector.collectInto(store, options.username, repos, {
+      onProgress(`Collecting GitHub history for @${username} …`);
+      const collector = new GitHubCollector(config.githubToken, undefined, { baseUrl: config.githubApiUrl });
+      const collected = await collector.collectInto(store, username, repos, {
         since: options.since,
         refresh: options.refresh,
         preserveRepos,
@@ -169,7 +201,7 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
 
     if (gitDirs.length > 0) {
       onProgress(`Reading ${gitDirs.length} local git repositor${gitDirs.length === 1 ? 'y' : 'ies'} …`);
-      const local = await new GitDirectoryCollector().collectInto(store, options.username, gitDirs, {
+      const local = await new GitDirectoryCollector().collectInto(store, username, gitDirs, {
         since: options.since,
         refresh: options.refresh,
         identity: options.authorIdentity,
@@ -184,10 +216,10 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
 
     if (collectedTotal === 0) {
       onProgress(
-        `warning: no activity found for @${options.username} in ${scope.join(', ')} — check the username, the names/dirs, and the --since window.`,
+        `warning: no activity found for @${username} in ${scope.join(', ')} — check the username, the names/dirs, and the --since window.`,
       );
     }
-    return await finishFromStore(store, config, options.username, [...new Set(scope)], onProgress, display, {
+    return await finishFromStore(store, config, username, [...new Set(scope)], onProgress, display, {
       redact: options.redact,
       html: options.html,
     });
@@ -208,8 +240,16 @@ export async function renderHandoverBook(
     noLlm: options.noLlm,
   });
   const onProgress = options.onProgress ?? (() => {});
+  // Same library-boundary validation as generateHandoverBook: file names here
+  // are derived from the username as well. requireIndex runs *before* the store
+  // opens: better-sqlite3 would otherwise create an empty `<user>.db` just to
+  // fail on the missing meta rows — and that empty file then satisfies the
+  // guard forever, making a later `handover risk` answer "(no items)" instead
+  // of "run collect first".
+  const username = parseUsername(options.username);
+  await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
   await mkdir(config.dataDir, { recursive: true });
-  const store = new HandoverStore(dbPathFor(config, options.username));
+  const store = new HandoverStore(dbPathFor(config, username));
   try {
     let repos = options.repos ?? [];
     if (repos.length === 0) {
@@ -219,15 +259,15 @@ export async function renderHandoverBook(
         .filter(Boolean);
       if (repos.length === 0) {
         throw new Error(
-          `The index for @${options.username} does not record any repositories — pass -r owner/name, or collect first.`,
+          `The index for @${username} does not record any repositories — pass -r owner/name, or collect first.`,
         );
       }
       onProgress(`Using repositories from the index: ${repos.join(', ')}`);
     }
     // Prefer the canonical login recorded at collect time for display.
     const collectedFor = store.getMeta('collected_for');
-    const display = collectedFor && sameLogin(collectedFor, options.username) ? collectedFor : options.username;
-    return await finishFromStore(store, config, options.username, repos, onProgress, display, {
+    const display = collectedFor && sameLogin(collectedFor, username) ? collectedFor : username;
+    return await finishFromStore(store, config, username, repos, onProgress, display, {
       redact: options.redact,
       html: options.html,
     });

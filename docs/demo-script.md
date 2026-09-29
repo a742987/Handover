@@ -17,5 +17,5 @@ The demo video is recorded against a **real run** of the tool, not a mock-up. Th
 
 - **Real results only.** The terminal shows a real run; the report is a real render. The [committed sample](../examples/sample-report/handover-book-dana-dev.md) is a labelled synthetic scenario and may be used as the subject — say so on screen if it is.
 - **Time is time.** Video length is not generation time. If the capture step is sped up or cut, label it on screen ("collection edited; full run took X s in this repo"). Never simulate progress bars.
-- **Runtime conditions stated.** The video description (or an end card) records the machine, repository size, flags used (`--no-llm` or provider), and the measured collection/synthesis time.
+- **Runtime conditions stated.** The video description (or an end card) records the machine, repository size, flags used (default deterministic, or `--use-llm` with the provider name), and the measured collection/synthesis time.
 - **The links are real.** The end card links to the repository and the sample report; the sample link in the repo README points back to this script until a recorded video replaces it.

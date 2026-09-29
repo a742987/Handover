@@ -1,0 +1,70 @@
+name: Release
+
+# Tag-driven publishing: `git tag v1.2.3 && git push origin v1.2.3`.
+#
+# The version comes from the tag, never from a hand-edited package.json, and the
+# artifact is built from that exact commit — so npm's gitHead always matches the
+# tag and a release cannot be produced from a dirty working tree. That is the
+# failure this workflow removes: handover-book 0.1.1 was published with a gitHead
+# pointing at the v0.1.0 commit, so no tag reproduces it.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Deployments gate the environment: without an approval there is no NPM_TOKEN
+    # at all, so a tag pushed by mistake publishes nothing.
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write # npm provenance / attestations
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+
+      - name: The tag must match package.json
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag v$tag does not match package.json version $pkg" >&2
+            exit 1
+          fi
+
+      - name: The tagged commit must be on main
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Audit the tarball before publishing it
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/pack"
+          npm pack --pack-destination "$RUNNER_TEMP/pack" >/dev/null
+          node scripts/check-package.mjs "$RUNNER_TEMP"/pack/*.tgz
+
+      - name: Publish with provenance
+        run: npm publish --provenance --access public --tag "$NPM_DIST_TAG"
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # new pre-release lines can be pointed at a channel without editing YAML
+          NPM_DIST_TAG: latest

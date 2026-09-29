@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import http from 'node:http';
+import net from 'node:net';
 import type { Octokit } from '@octokit/rest';
-import { GitHubCollector, parseRepoSlug } from '../src/collect/github.js';
+import { explainGitHubError, GitHubCollector, isRetryable, parseRepoSlug } from '../src/collect/github.js';
 import { HandoverStore } from '../src/store/sqlite.js';
 
 const FULL_NAME = 'acme/api';
@@ -108,7 +110,9 @@ function fakeOctokit(data: FakeData, calls: { getCommit: number }): unknown {
       listReviews: () => data.reviews ?? [],
     },
     issues: {
-      list: () => {},
+      // GET /repos/{owner}/{repo}/issues — *not* issues.list, which is
+      // GET /issues ("assigned to me", anywhere, and 401 without a token).
+      listForRepo: () => {},
       listComments: () => {},
     },
   };
@@ -123,7 +127,7 @@ function fakeOctokit(data: FakeData, calls: { getCommit: number }): unknown {
     if (route === rest.pulls.list) {
       return data.pullRequests ?? [];
     }
-    if (route === rest.issues.list) {
+    if (route === rest.issues.listForRepo) {
       return data.issues ?? [];
     }
     if (route === rest.pulls.listFiles) {
@@ -212,6 +216,34 @@ describe('GitHubCollector', () => {
     const { result } = await collect({ commitListError: { status: 409 } });
     expect(result.indexedCommits).toBe(0);
     expect(result.pullRequests).toBe(0);
+  });
+
+  it('leaves the index untouched when a collect fails partway through', async () => {
+    // The out-of-scope cleanup used to run before the first request went out, so
+    // a collect that died on a rate limit or a hung connection had already
+    // deleted every repository the command line did not name — data destroyed,
+    // nothing replacing it, and no way for the user to know what was lost.
+    const store = HandoverStore.inMemory();
+    store.upsertCommit({
+      sha: 'b'.repeat(40),
+      repo: 'other/repo',
+      authorLogin: USERNAME,
+      authoredAt: '2026-09-01T00:00:00Z',
+      message: 'collected by an earlier run',
+      additions: 1,
+      deletions: 0,
+      files: [],
+    });
+    try {
+      const collector = new GitHubCollector(
+        'test-token',
+        fakeOctokit({ commitListError: { status: 451 } }, { getCommit: 0 }) as unknown as Octokit,
+      );
+      await expect(collector.collectInto(store, USERNAME, [FULL_NAME], {})).rejects.toThrow();
+      expect(store.repoKeys(), 'a failed collect must not delete what it never replaced').toContain('other/repo');
+    } finally {
+      store.close();
+    }
   });
 
   it('mirrors a PR conversation into the shared issue namespace', async () => {
@@ -482,5 +514,143 @@ describe('collection scope normalization', () => {
     const { store } = await collect({ commits: [] });
     expect(store.getMeta('collected_via')).toBe('github');
     store.close();
+  });
+});
+
+/**
+ * A stub shaped around the implementation cannot catch a wrong endpoint. The
+ * Octokit fake above mirrored `issues.list` for as long as the collector called
+ * it, and `GET /issues` is "issues assigned to the authenticated user, in any
+ * repository" — 401 with no token, and someone else's issue list with one. These
+ * cases go through real Octokit over a real socket, so they assert on the URLs
+ * the API itself would see.
+ */
+describe('the collector against a real Octokit and a local API', () => {
+  const requested: string[] = [];
+  type FakeMode = 'empty' | 'primary-limit' | 'secondary-limit';
+  let mode: FakeMode = 'empty';
+  const server = http.createServer((req, res) => {
+    const url = req.url ?? '';
+    requested.push(url.split('?')[0] ?? url);
+    res.setHeader('content-type', 'application/json');
+    if (mode === 'primary-limit') {
+      // what an exhausted anonymous quota actually looks like: no Retry-After,
+      // because "retry" is not a thing that can work before the reset
+      res.statusCode = 403;
+      res.setHeader('x-ratelimit-remaining', '0');
+      res.setHeader('x-ratelimit-reset', String(Math.floor(Date.now() / 1000) + 3600));
+      res.end(JSON.stringify({ message: 'API rate limit exceeded for 203.0.113.9.' }));
+      return;
+    }
+    if (mode === 'secondary-limit') {
+      res.statusCode = 403;
+      res.setHeader('retry-after', '1');
+      res.end(JSON.stringify({ message: 'You have triggered an abuse detection mechanism.' }));
+      return;
+    }
+    if (url.startsWith('/users/')) {
+      res.end(JSON.stringify({ login: USERNAME, id: 1, type: 'User' }));
+      return;
+    }
+    if (url.includes('/contents/')) {
+      res.statusCode = 404;
+      res.end(JSON.stringify({ message: 'Not Found' }));
+      return;
+    }
+    res.end('[]');
+  });
+
+  async function withServer<T>(body: (port: number) => Promise<T>): Promise<T> {
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      return await body(port);
+    } finally {
+      // undici keeps sockets alive; close() without this waits for them forever
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  }
+
+  async function collectOnce(
+    token: string,
+    asMode: FakeMode = 'empty',
+  ): Promise<{ paths: string[]; error: string }> {
+    requested.length = 0;
+    mode = asMode;
+    const store = HandoverStore.inMemory();
+    try {
+      return await withServer(async (port) => {
+        const collector = new GitHubCollector(token, undefined, {
+          baseUrl: `http://127.0.0.1:${port}`,
+          timeoutMs: 5_000,
+        });
+        let error = '';
+        try {
+          await collector.collectInto(store, USERNAME, [FULL_NAME], {});
+        } catch (caught) {
+          error = caught instanceof Error ? caught.message : String(caught);
+        }
+        return { paths: [...requested], error };
+      });
+    } finally {
+      mode = 'empty';
+      store.close();
+    }
+  }
+
+  it('lists repository issues from the repository route', async () => {
+    const { paths } = await collectOnce('test-token');
+    expect(paths, `requests made: ${paths.join(' ')}`).toContain(`/repos/${FULL_NAME}/issues`);
+    expect(paths).not.toContain('/issues');
+  });
+
+  it('never reads a route outside the asked-for repository and the username lookup', async () => {
+    const { paths } = await collectOnce('test-token');
+    const strays = paths.filter((path) => !path.startsWith(`/repos/${FULL_NAME}/`) && !path.startsWith('/users/'));
+    expect(strays, `off-scope requests: ${strays.join(' ')}`).toEqual([]);
+  });
+
+  it('gives up on an exhausted quota after one attempt, and says when it resets', async () => {
+    // Four doomed attempts per request is how a collect used to spend its last
+    // minutes: the backoff ladder cannot fix a quota that resets on the hour.
+    const { paths, error } = await collectOnce('test-token', 'primary-limit');
+    expect(paths.length, `expected one request, saw: ${paths.join(' ')}`).toBe(1);
+    expect(error).toMatch(/rate limit exceeded/i);
+    expect(error).toMatch(/resets at \d{4}-\d{2}-\d{2}T[\d:.]+Z \(UTC\)/);
+    expect(error).toMatch(/GITHUB_TOKEN/);
+  }, 30_000);
+
+  it('keeps retrying the limit that told us when to come back', async () => {
+    const { paths } = await collectOnce('test-token', 'secondary-limit');
+    expect(paths.length, 'a secondary limit is worth waiting out').toBeGreaterThan(1);
+    expect(paths.length).toBeLessThanOrEqual(4);
+  }, 30_000);
+
+  it('separates the two limits by their headers, not by the message alone', () => {
+    const httpError = (status: number, message: string, headers: Record<string, string> = {}) =>
+      Object.assign(new Error(message), { status, response: { headers } });
+    expect(isRetryable(httpError(403, 'API rate limit exceeded', { 'x-ratelimit-remaining': '0' }))).toBe(false);
+    expect(isRetryable(httpError(429, 'Too Many Requests', { 'x-ratelimit-remaining': '0' }))).toBe(false);
+    expect(isRetryable(httpError(403, 'abuse detection mechanism', { 'retry-after': '5' }))).toBe(true);
+    // an unlabelled 403 stays retryable — the old behaviour, and the safe default
+    expect(isRetryable(httpError(403, 'rate limit exceeded'))).toBe(true);
+    expect(isRetryable(httpError(502, 'Bad Gateway'))).toBe(true);
+    expect(isRetryable(httpError(404, 'Not Found'))).toBe(false);
+  });
+
+  it('explains a 401 differently depending on whether a token was set', () => {
+    const withToken = explainGitHubError(Object.assign(new Error('Bad credentials'), { status: 401 }), true);
+    expect(withToken.message).toMatch(/check that GITHUB_TOKEN is valid/);
+    // "check the token you never set" sent people to the wrong door
+    const withoutToken = explainGitHubError(Object.assign(new Error('Requires authentication'), { status: 401 }), false);
+    expect(withoutToken.message).toMatch(/no GITHUB_TOKEN is set/);
+    expect(withoutToken.message).not.toMatch(/check that GITHUB_TOKEN is valid/);
+    // and the rate-limit hint survives untouched
+    expect(explainGitHubError(Object.assign(new Error('rate limit exceeded'), { status: 403 })).message).toMatch(
+      /60 to 5000/,
+    );
   });
 });

@@ -1,7 +1,6 @@
 import type { ActionItem, BookCoverage, RiskItem } from '../types.js';
 import type { HandoverStore } from '../store/sqlite.js';
 import { codeSpan } from '../render/escape.js';
-import { isBotLogin } from '../risk/engine.js';
 
 const SOURCE_LABELS: Record<string, string> = {
   github: 'GitHub API (commits, PRs, reviews, issues)',
@@ -45,77 +44,54 @@ function sourceLabels(store: HandoverStore, repos: string[]): string[] {
  * contents. Both builders read only the local index — no network, no LLM.
  */
 export function buildCoverage(store: HandoverStore, repos: string[]): BookCoverage {
-  const commits = store.allCommits();
-  const pullRequests = store.allPullRequests();
-  const reviews = store.allReviews();
-  const issues = store.allIssues();
-
-  let comments = 0;
-  for (const issue of issues) {
-    comments += issue.comments.length;
-  }
-
-  const authors = new Set<string>();
-  let unattributed = 0;
-  let from: string | null = null;
-  let to: string | null = null;
-  for (const commit of commits) {
-    if (commit.authorLogin === 'unknown') {
-      unattributed += 1;
-    } else if (!isBotLogin(commit.authorLogin)) {
-      // CI bots (dependabot[bot], …) are not teammates — they must not read as
-      // "other people who can take over"
-      authors.add(commit.authorLogin);
-    }
-    if (!from || commit.authoredAt < from) {
-      from = commit.authoredAt;
-    }
-    if (!to || commit.authoredAt > to) {
-      to = commit.authoredAt;
-    }
-  }
+  // Commit-side numbers come from SQLite aggregates: the action page is built on
+  // every run, and summing a whole monorepo history in memory to get four
+  // numbers and a date range was the largest allocation in the pipeline.
+  // Bots are excluded from the headcount by the query, as isBotLogin did here.
+  const commitStats = store.commitCoverage();
+  const recordCounts = store.recordCounts();
 
   const sources = sourceLabels(store, repos);
   // Indexes collected earlier may hold repos that are no longer in scope; report
   // what the data actually spans, not just what this run asked for.
-  for (const repo of new Set([...commits.map((c) => c.repo), ...pullRequests.map((p) => p.repo)])) {
+  for (const repo of store.repoKeys()) {
     if (!repos.includes(repo)) {
       repos.push(repo);
     }
   }
 
   const gaps: string[] = [];
-  if (pullRequests.length === 0 && reviews.length === 0) {
+  if (recordCounts.pullRequests === 0 && recordCounts.reviews === 0) {
     gaps.push(
       'No pull requests or reviews were collected — "why" decisions and review discussions are missing from this book. Collect from GitHub (-r owner/name) to include them.',
     );
-  } else if (reviews.length === 0) {
+  } else if (recordCounts.reviews === 0) {
     gaps.push('No reviews were collected — review coverage is invisible in this book.');
   }
-  if (issues.length === 0) {
+  if (recordCounts.issues === 0) {
     gaps.push('No issues were collected — incident history is missing from the risk scores.');
   }
-  if (unattributed > 0) {
-    gaps.push(`${unattributed} commit(s) could not be attributed to an author and were excluded from ownership ratios.`);
+  if (commitStats.unattributed > 0) {
+    gaps.push(`${commitStats.unattributed} commit(s) could not be attributed to an author and were excluded from ownership ratios.`);
   }
-  if (store.listAnswers().length === 0) {
+  if (recordCounts.capturedAnswers === 0) {
     gaps.push('No first-person answers recorded yet — run `handover capture` with the departing engineer before they leave.');
   }
 
   return {
     repos: [...repos],
     sources,
-    commitWindow: { from, to },
+    commitWindow: { from: commitStats.from, to: commitStats.to },
     counts: {
-      commits: commits.length,
-      pullRequests: pullRequests.length,
-      reviews: reviews.length,
-      issues: issues.length,
-      comments,
-      capturedAnswers: store.listAnswers().length,
+      commits: commitStats.commits,
+      pullRequests: recordCounts.pullRequests,
+      reviews: recordCounts.reviews,
+      issues: recordCounts.issues,
+      comments: recordCounts.comments,
+      capturedAnswers: recordCounts.capturedAnswers,
     },
-    contributors: authors.size,
-    unattributedCommits: unattributed,
+    contributors: commitStats.contributors,
+    unattributedCommits: commitStats.unattributed,
     gaps,
   };
 }

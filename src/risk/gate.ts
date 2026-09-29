@@ -1,4 +1,5 @@
 import { moduleOf } from './engine.js';
+import { codeSpan } from '../render/escape.js';
 import type { EvidenceRef, RiskItem } from '../types.js';
 
 export interface GateMatch {
@@ -43,6 +44,14 @@ export function matchTouchedModules(risks: RiskItem[], changedPaths: string[], r
     }));
 }
 
+/**
+ * Evidence URLs are constructed from a repository slug, so an https GitHub link
+ * is the only shape worth turning into a live link in a PR comment.
+ */
+function refUrl(ref: EvidenceRef): string | undefined {
+  return ref.url && /^https:\/\/github\.com\/[^\s<>"']+$/.test(ref.url) ? ref.url : undefined;
+}
+
 /** Markdown PR-comment body listing the risky touched modules. */
 export function renderGateComment(matches: GateMatch[], username: string): string {
   if (matches.length === 0) {
@@ -55,9 +64,14 @@ export function renderGateComment(matches: GateMatch[], username: string): strin
     '',
   ];
   for (const match of matches) {
-    lines.push(`- \`${match.module}\` (risk ${match.score.toFixed(3)})`);
+    // The module name is a repository path and the ref is a PR/commit token:
+    // both come from whatever a pull request contains. Emitted as plain text,
+    // one backtick in a directory name closed the code span and the rest of the
+    // line rendered as the gate bot's own message.
+    lines.push(`- ${codeSpan(match.module)} (risk ${match.score.toFixed(3)})`);
     for (const ref of match.evidence.slice(0, 3)) {
-      lines.push(`  - ${ref.ref}${ref.url ? ` — ${ref.url}` : ''}`);
+      const link = refUrl(ref);
+      lines.push(link ? `  - ${codeSpan(ref.ref)} — ${link}` : `  - ${codeSpan(ref.ref)}`);
     }
   }
   return lines.join('\n');

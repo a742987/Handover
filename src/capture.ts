@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline/promises';
 import { QUESTIONS } from './distill/synthesize.js';
+import { printLine } from './print.js';
 import type { HandoverStore } from './store/sqlite.js';
 
 export interface CaptureEntry {
@@ -52,10 +53,11 @@ export async function runInteractiveCapture(store: HandoverStore, username: stri
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   let stored = 0;
   try {
-    console.log(`Capturing first-person answers for @${username}. The book is stronger for every honest sentence.`);
-    console.log('Type your answer, finish with a blank line. "skip" leaves it open, "quit" stops.\n');
+    printLine(process.stdout, `Capturing first-person answers for @${username}. The book is stronger for every honest sentence.`);
+    printLine(process.stdout, 'Type your answer, finish with a blank line. "skip" leaves it open, "quit" stops.');
+    printLine(process.stdout);
     for (const question of QUESTIONS) {
-      console.log(`Q: ${question}`);
+      printLine(process.stdout, `Q: ${question}`);
       const lines: string[] = [];
       for (;;) {
         const line = (await rl.question(lines.length === 0 ? '> ' : '… ')).replace(/\r$/, '');
@@ -63,7 +65,8 @@ export async function runInteractiveCapture(store: HandoverStore, username: stri
           break;
         }
         if (lines.length === 0 && /^skip$/i.test(line.trim())) {
-          console.log('   (skipped)\n');
+          printLine(process.stdout, '   (skipped)');
+          printLine(process.stdout);
           break;
         }
         if (lines.length === 0 && /^quit$/i.test(line.trim())) {
@@ -74,10 +77,11 @@ export async function runInteractiveCapture(store: HandoverStore, username: stri
       const answer = lines.join('\n').trim();
       if (answer) {
         stored += applyAnswers(store, [{ question, answer }]);
-        console.log(`   captured (${answer.split('\n').length} lines)\n`);
+        printLine(process.stdout, `   captured (${answer.split('\n').length} lines)`);
+        printLine(process.stdout);
       }
     }
-    console.log('Add any question of your own, or press blank to finish.');
+    printLine(process.stdout, 'Add any question of your own, or press blank to finish.');
     for (;;) {
       const question = (await rl.question('Question: ')).trim();
       if (!question) {

@@ -10,6 +10,12 @@ export class MissingCredentialError extends Error {}
 
 const REQUEST_TIMEOUT_MS = 120_000;
 const MAX_ATTEMPTS = 3;
+let requestTimeoutMs = REQUEST_TIMEOUT_MS;
+
+/** Set from HandoverConfig so the abort path is testable without waiting two minutes. */
+export function setLlmRequestTimeout(ms: number | undefined): void {
+  requestTimeoutMs = ms && ms > 0 ? ms : REQUEST_TIMEOUT_MS;
+}
 const BACKOFF_BASE_MS = 1_000;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
@@ -17,7 +23,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Posts JSON with bounded retries on rate limits, transient 5xx and network errors. */
+/**
+ * Posts JSON with bounded retries on rate limits, transient 5xx and network
+ * errors. The body is checked to be an object before it comes back: every caller
+ * walks it with optional chaining, which reads properties off `null` and
+ * primitives and throws an opaque TypeError — the exact failure mode this file
+ * is meant to name.
+ */
 async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
@@ -27,7 +39,7 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
         method: 'POST',
         headers: { 'content-type': 'application/json', ...headers },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(requestTimeoutMs),
       });
     } catch (error) {
       lastError = error;
@@ -40,10 +52,19 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
     const text = await response.text();
     if (response.ok) {
       try {
-        return JSON.parse(text) as unknown;
-      } catch {
+        const parsed: unknown = JSON.parse(text);
+        if (typeof parsed !== 'object' || parsed === null) {
+          throw new Error(
+            `provider at ${url} replied with a non-object body (HTTP ${response.status}): ${text.slice(0, 200)}`,
+          );
+        }
+        return parsed;
+      } catch (error) {
         // A 2xx with a non-JSON body (proxy page, HTML error) needs its own message.
-        throw new Error(`Unexpected non-JSON response from ${url} (HTTP ${response.status}): ${text.slice(0, 200)}`);
+        if (error instanceof SyntaxError) {
+          throw new Error(`Unexpected non-JSON response from ${url} (HTTP ${response.status}): ${text.slice(0, 200)}`);
+        }
+        throw error;
       }
     }
     lastError = new Error(`${response.status} from ${url}: ${text.slice(0, 300)}`);
@@ -59,6 +80,23 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
     );
   }
   throw lastError;
+}
+
+/**
+ * A provider reply is untrusted input like a commit message is — an
+ * `as { choices?: … }` cast only silences the compiler. A non-string `content`
+ * reaches `.trim()` one layer up and throws there, which the chapter falls back
+ * from, but the failure would be an opaque TypeError instead of a named shape
+ * problem, and a hostile Enterprise endpoint could pick exactly that.
+ */
+function requireText(value: unknown, field: string): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return '';
+  }
+  throw new Error(`provider returned ${field} of type ${Array.isArray(value) ? 'array' : typeof value}, expected text`);
 }
 
 function parseBaseUrl(url: string): string {
@@ -87,7 +125,9 @@ function createOpenAiProvider(config: HandoverConfig): LlmProvider {
         },
       )) as { choices?: Array<{ message?: { content?: string }; finish_reason?: string }> };
       const choice = data.choices?.[0];
-      const content = choice?.message?.content ?? '';
+      // OpenAI's content is a string for the models we call; array-part replies
+      // are a shape we do not ask for and must not pretend to understand.
+      const content = requireText(choice?.message?.content, 'choices[0].message.content');
       // finish_reason === 'length' means the response hit the provider's cap — fail the
       // chapter so the caller falls back to deterministic synthesis with a clean reason.
       if (choice?.finish_reason === 'length') {
@@ -119,8 +159,8 @@ function createAnthropicProvider(config: HandoverConfig): LlmProvider {
         },
       )) as { content?: Array<{ type?: string; text?: string }>; stop_reason?: string };
       const content = (data.content ?? [])
-        .filter((block) => block.type === 'text')
-        .map((block) => block.text ?? '')
+        .filter((block) => block !== null && typeof block === 'object' && block.type === 'text')
+        .map((block) => requireText(block.text, 'content[].text'))
         .join('');
       // stop_reason === 'max_tokens' means the response was truncated
       if (data.stop_reason === 'max_tokens') {
@@ -149,7 +189,7 @@ function createOllamaProvider(config: HandoverConfig): LlmProvider {
           ],
         },
       )) as { message?: { content?: string }; done_reason?: string };
-      const content = data.message?.content ?? '';
+      const content = requireText(data.message?.content, 'message.content');
       // done_reason === 'length' means the response was truncated
       if (data.done_reason === 'length') {
         throw new Error('Ollama response was truncated (done_reason=length) — shorten the input (the request sets no num_predict, so only the model default applies)');
@@ -161,6 +201,7 @@ function createOllamaProvider(config: HandoverConfig): LlmProvider {
 
 /** Builds the provider named by the config; throws MissingCredentialError when its key is absent. */
 export function createProvider(config: HandoverConfig): LlmProvider {
+  setLlmRequestTimeout(config.llmTimeoutMs);
   switch (config.provider) {
     case 'openai':
       return createOpenAiProvider(config);

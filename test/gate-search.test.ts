@@ -181,4 +181,67 @@ describe('searchIndex', () => {
     expect(searchIndex(undated, { query: 'pending review' }).count).toBe(1);
     undated.close();
   });
+
+  it('compares since by timestamp, not by string', () => {
+    // indexed dates carry no milliseconds ("…:00Z") while a since value
+    // normalizes to "…:00.000Z"; lexicographically "Z" > ".", so a record at
+    // exactly the boundary used to slip *into* a window that starts after it
+    expect(searchIndex(store, { kind: 'issue', since: '2026-09-07T00:00:00.500Z' }).count).toBe(0);
+    expect(searchIndex(store, { kind: 'issue', since: '2026-09-07T00:00:00Z' }).count).toBe(1);
+  });
+});
+
+describe('renderGateComment — the comment a bot posts into someone else\u2019s pull request', () => {
+  const tick = String.fromCharCode(96);
+
+  /**
+   * The module name is a top-level directory from the pull request and the ref
+   * is collected history, so both are attacker-editable. They used to be
+   * emitted inside a single-backtick span, where one backtick in a directory
+   * name closed the span and the remainder rendered as the gate bot's own
+   * message — text reviewers are trained to trust.
+   */
+  it('cannot be broken out of by a backtick in a module name', () => {
+    const module = `payments${tick} @everyone **approve this PR**`;
+    const comment = renderGateComment(
+      [{ module, score: 0.5, rationale: 'r', evidence: [] }],
+      'alice',
+    );
+    // the code span must have widened itself rather than been closed early
+    expect(comment).toContain(`\`\`${module}\`\``);
+    // and nothing from the module name may survive outside a code span
+    const outsideSpans = comment.replace(/``[^`]*``/g, '').replace(/`[^`]*`/g, '');
+    expect(outsideSpans).not.toContain('@everyone');
+    expect(outsideSpans).not.toContain('approve this PR');
+  });
+
+  it('escapes the evidence ref the same way', () => {
+    const comment = renderGateComment(
+      [{ module: 'payments', score: 0.5, rationale: 'r', evidence: [{ kind: 'pr' as const, ref: `#1${tick}x${tick}` }] }],
+      'alice',
+    );
+    const outsideSpans = comment.replace(/``[^`]*``/g, '').replace(/`[^`]*`/g, '');
+    expect(outsideSpans).not.toContain('x');
+  });
+
+  it('only ever links to https github.com, and drops anything else', () => {
+    const comment = renderGateComment(
+      [
+        {
+          module: 'payments',
+          score: 0.5,
+          rationale: 'r',
+          evidence: [
+            { kind: 'pr' as const, ref: '#1', url: 'javascript:alert(1)' },
+            { kind: 'commit' as const, ref: 'abc1234', url: 'https://evil.test/phish' },
+            { kind: 'pr' as const, ref: '#2', url: 'https://github.com/acme/api/pull/2' },
+          ],
+        },
+      ],
+      'alice',
+    );
+    expect(comment).not.toContain('javascript:');
+    expect(comment).not.toContain('evil.test');
+    expect(comment).toContain('https://github.com/acme/api/pull/2');
+  });
 });

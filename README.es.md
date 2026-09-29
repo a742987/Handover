@@ -7,7 +7,7 @@
 > **Cuando una persona desarrolladora se va, su conocimiento no debería irse con ella.**
 > Apunta Handover al nombre de usuario de un ingeniero que se marcha, y leerá todo lo que jamás haya confirmado, revisado o defendido — para luego producir un **Libro de Relevo** (Handover Book) encuadernado y con enlaces a la evidencia, para quien ocupe su puesto.
 
-Un solo comando. Se ejecuta localmente. Cuando se configura un proveedor LLM (lo predeterminado), el contenido del repositorio recopilado se envía a él para su síntesis; sin una clave API, todo permanece determinista y local.
+Un solo comando. Se ejecuta localmente. La síntesis con un LLM remoto es opcional (`--use-llm` o `HANDOVER_LLM=1`); sin ella, nada sale de la máquina y los capítulos 4-6 se generan de forma determinista.
 
 ```bash
 handover gen <username> --repo owner/name
@@ -61,17 +61,17 @@ El resultado queda en `handover-data/`:
 | `bus-factor <username>` | vista de equipo: qué módulos reciben commits de una sola persona, con fusión de CODEOWNERS cuando el repositorio tiene uno |
 | `gate <username> --files changed.txt` | comprobación de CI: ¿este conjunto de cambios toca módulos de propietario único? (`--comment`, `--fail-on-match`, `--repo owner/name` para acotar un índice multi-repositorio; ver [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
 | `verify <username>` | comprobación de existencia de citas: cada referencia citada en el libro renderizado debe existir en el índice (exit 1 si falta alguna — apto para CI, `--json` para máquinas) |
-| `render <username>` | vuelve a renderizar el libro desde el índice, sin acceso a GitHub (los capítulos 4-6 solo llaman al proveedor LLM si hay una clave API configurada; pasa `-r` para sobrescribir los repositorios registrados en el índice) |
+| `render <username>` | vuelve a renderizar el libro desde el índice, sin acceso a GitHub (los capítulos 4-6 solo llaman al proveedor LLM si se pasa `--use-llm` y hay una clave API configurada; pasa `-r` para sobrescribir los repositorios registrados en el índice) |
 
-Flags comunes: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (vuelve a obtener lo que ya está indexado), `--html` (gemelo HTML listo para imprimir), `--redact` (elimina los formatos de secretos conocidos del resumen para el LLM y del libro; también `HANDOVER_REDACT=1`), `--no-llm` (omite la síntesis del LLM aunque haya una clave configurada — solo capítulos deterministas, nada sale de la máquina; también `HANDOVER_NO_LLM=1`). `gen` y `collect` aceptan `--author <identity>` para hacer coincidir el nombre/correo de la persona que se marcha en los clones locales.
+Flags comunes: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (vuelve a obtener lo que ya está indexado), `--html` (gemelo HTML listo para imprimir), `--redact` (elimina los formatos de secretos conocidos del resumen para el LLM y del libro; **activado de forma predeterminada**), `--use-llm` / `HANDOVER_LLM=1` ([README.md#llm-providers](README.md#llm-providers), [.env.example](.env.example)), `--no-redact` (mantiene el texto del repositorio tal cual, también `HANDOVER_NO_REDACT=1`), `--no-llm` (omite la síntesis del LLM aunque haya una clave configurada — solo capítulos deterministas, nada sale de la máquina; también `HANDOVER_NO_LLM=1`). `gen` y `collect` aceptan `--author <identity>` para hacer coincidir el nombre/correo de la persona que se marcha en los clones locales.
 
 ### Proveedores de LLM
 
-Los capítulos 1–3 se calculan de forma determinista a partir del índice — siempre funcionan, con o sin clave de API. Los capítulos 4–6 los sintetiza un LLM; **sin clave recurren a resúmenes deterministas** en lugar de fallar.
+Los capítulos 1–3 se calculan de forma determinista a partir del índice — siempre funcionan, con o sin clave de API. Solo con `--use-llm` los capítulos 4–6 los sintetiza un LLM; **sin clave recurren a resúmenes deterministas** en lugar de fallar.
 
 - **Anthropic** — define `ANTHROPIC_API_KEY` (proveedor por defecto)
 - **OpenAI** — define `OPENAI_API_KEY` y ejecuta con `--provider openai`
-- **Ollama** — completamente local, sin clave: arranca Ollama y ejecuta con `--provider ollama`
+- **Ollama** — completamente local, sin clave: arranca Ollama y ejecuta con `--provider ollama --use-llm`. `--use-llm` es obligatorio — `--provider` solo elige el proveedor; la síntesis con LLM debe activarse explícitamente.
 
 Cada capítulo de LLM opera bajo una regla estricta: **cadena de evidencia o nada.** Las afirmaciones que el modelo no pueda respaldar con una referencia a un commit, PR, review o issue deben marcarse como *(inferencia)* — las afirmaciones no verificables no tienen sitio en un documento de relevo.
 
@@ -100,7 +100,7 @@ Cada elemento del Top 5 de riesgos lista los commits, reviews e issues exactos q
 
 ## Plugins para editores
 
-El mismo CLI impulsa tres integraciones. La capa común es un **servidor MCP integrado** (`handover-mcp`, incluido en el paquete npm) que expone `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (consulta de evidencia de solo lectura para preguntas de seguimiento) y `handover_render` como herramientas — cualquier cliente MCP puede usarlo sin invocar el CLI por debajo.
+El mismo CLI impulsa tres integraciones. La capa común es un **servidor MCP integrado** (`handover-mcp`, incluido en el paquete npm) que expone `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (consulta de evidencia de solo lectura para preguntas de seguimiento), `handover_render` y `handover_verify` (comprueba cada cita de evidencia contra el índice) como herramientas — cualquier cliente MCP puede usarlo sin invocar el CLI por debajo.
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -128,7 +128,7 @@ El plugin registra automáticamente el servidor MCP `handover` (mediante el camp
    ```
 2. Copia [`codex/handover.md`](codex/handover.md) en `~/.codex/prompts/handover.md` y ejecuta `/handover <username> --repo owner/name`.
 
-**Cualquier otro cliente MCP** (Cursor, ZCode, …) — registra `handover-mcp` como servidor stdio; las mismas seis herramientas en todas partes.
+**Cualquier otro cliente MCP** (Cursor, ZCode, …) — registra `handover-mcp` como servidor stdio; las mismas siete herramientas en todas partes.
 
 ## Privacidad y ética — lee esto antes de ejecutarlo para alguien
 

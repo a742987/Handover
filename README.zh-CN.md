@@ -70,9 +70,9 @@ handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 | `bus-factor <username>` | 团队视角：哪些模块只有一个人在提交，并在仓库带 CODEOWNERS 时合并之 |
 | `gate <username> --files changed.txt` | CI 检查：这组变更是否触碰了独占模块？（`--comment`、`--fail-on-match`、`--repo owner/name` 用于限定多仓库索引；示例见 [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)） |
 | `verify <username>` | 引用存在性检查：成书中引用的每一条证据 ref 都必须存在于索引中（有缺失时退出码为 1 —— 可用于 CI，`--json` 供机器读取） |
-| `render <username>` | 从索引重新渲染手册，不访问 GitHub（第 4-6 章仅在配置了 API 密钥时才调用 LLM 提供方；可用 `-r` 覆盖索引中记录的仓库） |
+| `render <username>` | 从索引重新渲染手册，不访问 GitHub（第 4-6 章仅在传入 `--use-llm` 且配置了 API 密钥时才调用 LLM 提供方；可用 `-r` 覆盖索引中记录的仓库） |
 
-常用参数：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（省略时区的时刻按 UTC 处理）、`--data-dir <dir>`、`--refresh`（重新抓取已索引的内容）、`--html`（可打印 HTML 双胞胎）、`--redact`（在送入 LLM 摘要和成书前清除已知密钥格式；也可用 `HANDOVER_REDACT=1`）、`--no-llm`（即使配置了密钥也跳过 LLM 合成 —— 仅输出确定性章节，任何内容都不离开本机；也可用 `HANDOVER_NO_LLM=1`）。`gen` 与 `collect` 还接受 `--author <identity>` 用于在本地克隆中匹配离职者的姓名/邮箱；`capture --list` 打印已录制的答案；`bus-factor` 支持 `--top <n>`、`--window <days>` 与 `--json`（供 CI 使用）。
+常用参数：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（省略时区的时刻按 UTC 处理）、`--data-dir <dir>`、`--refresh`（重新抓取已索引的内容）、`--html`（可打印 HTML 双胞胎）、`--redact`（在送入 LLM 摘要和成书前清除已知密钥格式；**默认开启**）、`--use-llm` / `HANDOVER_LLM=1`（显式开启 LLM 合成：收集到的仓库内容会发送到所配置的提供商）、`--no-redact`（保留仓库文本原样，跳过密钥清除；也可用 `HANDOVER_NO_REDACT=1`）、`--no-llm`（即使配置了密钥也跳过 LLM 合成 —— 仅输出确定性章节，任何内容都不离开本机；也可用 `HANDOVER_NO_LLM=1`）。`gen` 与 `collect` 还接受 `--author <identity>` 用于在本地克隆中匹配离职者的姓名/邮箱；`capture --list` 打印已录制的答案；`bus-factor` 支持 `--top <n>`、`--window <days>` 与 `--json`（供 CI 使用）。全部环境变量见 [.env.example](.env.example)。
 
 ## 数据流与边界 —— 选择路径前请先读这一节
 
@@ -80,20 +80,20 @@ handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 
 | 路径 | 适合谁 | 需要知道的 |
 |---|---|---|
-| **本地 Git + 确定性输出**（`--git-dir`，无 LLM 密钥或加 `--no-llm`） | 第一次试用、代码敏感、要推荐给环境受限的团队 | 没有 GitHub 的 PR / review / issue 讨论 —— "为什么"类决策和评审覆盖缺失；第 4-6 章为确定性摘要。手册的行动页会明确写出这一缺口。 |
-| **GitHub + 确定性输出**（`-r owner/name` + `GITHUB_TOKEN`，`--no-llm`） | 想要讨论记录、但先不用 LLM 的团队 | 需要 GitHub token（私有仓库需 repo 权限）；第 4-6 章是对最丰富讨论的确定性摘录。 |
-| **GitHub / 本地 Git + 远程 LLM**（`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`） | 需要第 4-6 章叙述性内容 | 收集到的仓库资料会被发送到所配置的提供商进行合成。未配置密钥时，运行过程不会联系任何 LLM，并退回到确定性章节而非报错。 |
-| **本地 Git + 本地模型**（`--provider ollama`） | 希望合成过程留在本机 | 需要本地运行 [Ollama](https://ollama.com)；模型合成质量未经充分实测 —— 请自行核验输出。 |
+| **本地 Git + 确定性输出**（`--git-dir`；LLM 合成本就默认关闭） | 第一次试用、代码敏感、要推荐给环境受限的团队 | 没有 GitHub 的 PR / review / issue 讨论 —— "为什么"类决策和评审覆盖缺失；第 4-6 章为确定性摘要。手册的行动页会明确写出这一缺口。 |
+| **GitHub + 确定性输出**（`-r owner/name`；LLM 默认关闭） | 想要讨论记录、但先不用 LLM 的团队 | 公开仓库无需 token 即可采集，限 60 次/小时；私有仓库（需 repo 权限）或大规模采集请设置 `GITHUB_TOKEN`。第 4-6 章是对最丰富讨论的确定性摘录。 |
+| **GitHub / 本地 Git + 远程 LLM**（需 `--use-llm`，并配置 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`） | 需要第 4-6 章叙述性内容 | 收集到的仓库资料会被发送到所配置的提供商进行合成。**这必须显式开启**：没有 `--use-llm` / `HANDOVER_LLM=1` 时，即使环境里已有密钥，运行也不会联系任何 LLM。未配置密钥时退回到确定性章节而非报错。 |
+| **本地 Git + 本地模型**（`--provider ollama --use-llm`） | 希望合成过程留在本机 | 需要本地运行 [Ollama](https://ollama.com)；模型合成质量未经充分实测 —— 请自行核验输出。 |
 
 `--no-llm` / `HANDOVER_NO_LLM=1` 是显式的关闭开关：即使环境里有密钥，也不会发送任何内容。"本地运行"指的是采集、索引和渲染 —— 当配置了远程提供商时，它**不等于**"仓库内容绝不离开本机"。
 
 ### LLM 提供方
 
-第 1–3 章直接从索引确定性计算 —— 无论有没有 API key 都能正常工作。第 4–6 章在配置了 LLM 时由其生成。
+第 1–3 章直接从索引确定性计算 —— 无论有没有 API key 都能正常工作。第 4–6 章仅在传入 `--use-llm`（或 `HANDOVER_LLM=1`）且配置了密钥时由 LLM 生成。
 
 - **Anthropic** —— 设置 `ANTHROPIC_API_KEY`（默认提供方）
 - **OpenAI** —— 设置 `OPENAI_API_KEY`，并以 `--provider openai` 运行
-- **Ollama** —— 完全本地、无需 key：启动 Ollama 后以 `--provider ollama` 运行
+- **Ollama** —— 完全本地、无需 key：启动 Ollama 后以 `--provider ollama --use-llm` 运行。`--use-llm` 是必需的 —— `--provider` 只负责选择提供方，LLM 合成本身必须显式开启。
 
 每个 LLM 章节都遵守一条硬性规则：**要么有证据链，要么不作数。**模型无法用 commit、PR、review 或 issue 引用来支撑的论断，必须标注 *(inference)*（推断）。第 6 章绝不冒充离职工程师本人：AI 草稿答案会明确标注为待确认草稿，只有 `handover capture` 录制的回答才是第一人称。分发手册前请先运行 `handover verify`。
 
@@ -122,7 +122,7 @@ risk = sole_contribution_ratio
 
 ## 编辑器插件
 
-同一个 CLI 驱动三套集成。公共层是一个**内置 MCP 服务器**（`handover-mcp`，随 npm 包一起发布），它把 `handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（只读证据检索，用于回答追问）和 `handover_render` 暴露为工具 —— 任何 MCP 客户端都可以直接使用，无需调用 CLI。
+同一个 CLI 驱动三套集成。公共层是一个**内置 MCP 服务器**（`handover-mcp`，随 npm 包一起发布），它把 `handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（只读证据检索，用于回答追问）、`handover_render` 和 `handover_verify`（对照索引校验每一条证据引用）暴露为工具 —— 任何 MCP 客户端都可以直接使用，无需调用 CLI。
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -150,7 +150,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
    ```
 2. 把 [`codex/handover.md`](codex/handover.md) 复制到 `~/.codex/prompts/handover.md`，然后运行 `/handover <username> --repo owner/name`。
 
-**其他任何 MCP 客户端**（Cursor、ZCode 等）—— 把 `handover-mcp` 注册为 stdio 服务器即可；到处都是同样的六个工具。
+**其他任何 MCP 客户端**（Cursor、ZCode 等）—— 把 `handover-mcp` 注册为 stdio 服务器即可；到处都是同样的七个工具。
 
 ## 隐私与伦理 —— 在为别人运行之前请先读这一节
 
@@ -158,7 +158,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
 - **本地优先，表述精确。** 采集、索引和渲染全部在你的机器上运行。仅有的网络调用是发往 GitHub API 和你配置的 LLM 提供方。使用 `--no-llm`（或 Ollama）时，任何仓库内容都不会到达第三方；配置了远程提供商时，所选资料会被发送给它进行合成。
 - **索引文件是敏感的。** `handover-data/*.db` 包含你们团队的完整 commit 历史。它默认已被 gitignore；请像对待凭据一样对待这个文件。
 - **幻觉是 bug，不是小毛病。** LLM 输出必须引用证据引用（evidence refs）；无依据的说法必须标注 *(inference)*。第 6 章的问答草稿明确标注为待本人确认 —— 只有录制的回答才以本人身份呈现。分发手册前请运行 `handover verify`。
-- **密钥清洗。** `--redact` / `HANDOVER_REDACT=1` 会在内容送入 LLM 之前以及成书时清除已知密钥格式（GitHub/AWS/Slack/GitLab token、`key: value` 赋值、私钥块）——尽力而为，并非保证。
+- **密钥清洗。** 默认开启（`--redact` 与旧写法 `HANDOVER_REDACT=1` 仍被接受但已是冗余；用 `--no-redact` / `HANDOVER_NO_REDACT=1` 关闭）。它会在内容送入 LLM 之前以及成书时清除已知密钥格式（GitHub/AWS/Slack/GitLab token、`key: value` 赋值、私钥块）——尽力而为，并非保证。
 - **匿名化**（真实姓名 → 角色代号，用于 HR 场景）已列入路线图，将在任何团队/企业版发布之前完成。
 
 ## 开发
@@ -186,7 +186,8 @@ npm run sample      # 重新生成仓库内样例手册（examples/sample-report
 - [x] 行动摘要首页（含数据覆盖说明）、`handover verify` 引用检查、显式 `--no-llm` 关闭开关
 - [x] 仓库内样例手册与核验记录（`examples/sample-report/`）
 - [x] 从已发布的 npm 包在干净环境端到端跑通：安装 → `gen`（本地 Git，`--no-llm`）→ `verify`（[验证记录](docs/install-verification.md)）
-- [ ] 用 GitHub token 在公开仓库上端到端跑通采集路径（`-r owner/name`），并在干净环境中覆盖一个 Unix 环境
+- [x] 无 token 的 `-r owner/name` 采集已在公开仓库上端到端跑通（验证记录见 `docs/install-verification.md` Record 3）
+- [ ] 带 `GITHUB_TOKEN` 的认证采集端到端跑通 —— 私有仓库、深分页，以及在干净环境中覆盖一个 Unix 系统
 - [ ] 带证据深层链接的本地 web 阅读器（v0.2）
 - [ ] 组织级能力风险地图（v1.0）
 

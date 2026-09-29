@@ -4,7 +4,9 @@ import type { HandoverStore } from '../store/sqlite.js';
 
 const DAY_MS = 86_400_000;
 
-const BUG_LABEL_PATTERN = /bug|incident|regression|outage|crash/i;
+// Word-boundary match, not substring: a `debugging` label is not an incident,
+// and substring matching pushed `bug`-by-prefix onto its score.
+const BUG_LABEL_PATTERN = /\b(?:bugs?|incidents?|regressions?|outages?|crashes?)\b/i;
 
 /** Top-level directory of a file path; files at the repo root form the "(root)" module. */
 export function moduleOf(path: string): string {
@@ -27,8 +29,11 @@ interface ModuleAccumulator {
   recent: number;
   bugMentions: number;
   userCommits: Array<{ sha: string; authoredAt: string; message: string }>;
-  reviewTotal: number;
-  userReviews: number;
+  /** distinct PRs whose reviews touched this module */
+  reviewedPrs: Set<number>;
+  /** distinct reviewers across those PRs (lowercased logins) */
+  reviewers: Set<string>;
+  userReviewed: boolean;
   exampleReview: { prNumber: number; id: number } | null;
   bugIssues: Set<number>;
 }
@@ -72,8 +77,9 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
       recent: 0,
       bugMentions: 0,
       userCommits: [],
-      reviewTotal: 0,
-      userReviews: 0,
+      reviewedPrs: new Set<number>(),
+      reviewers: new Set<string>(),
+      userReviewed: false,
       exampleReview: null,
       bugIssues: new Set<number>(),
     };
@@ -81,22 +87,23 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     return fresh;
   };
 
-  // Bug-labelled issues, per repo, for incident correlation.
+  // Bug-labelled issues, per repo, for incident correlation. Only the label
+  // rows are read: the titles and comment bodies allIssues() returns are not
+  // used here, and they are the bulk of the index's text.
   const bugNumbersByRepo = new Map<string, Set<number>>();
-  for (const issue of store.allIssues()) {
-    if (!issue.labels.some((label) => BUG_LABEL_PATTERN.test(label))) {
+  for (const { repo, number, label } of store.issueLabelRows()) {
+    if (!BUG_LABEL_PATTERN.test(label)) {
       continue;
     }
-    let numbers = bugNumbersByRepo.get(issue.repo);
+    let numbers = bugNumbersByRepo.get(repo);
     if (!numbers) {
       numbers = new Set<number>();
-      bugNumbersByRepo.set(issue.repo, numbers);
+      bugNumbersByRepo.set(repo, numbers);
     }
-    numbers.add(issue.number);
+    numbers.add(number);
   }
 
-  const commits = store.allCommits();
-  for (const commit of commits) {
+  for (const commit of store.iterCommits()) {
     const repoBugs = bugNumbersByRepo.get(commit.repo);
     const referencedBugs = new Set<number>();
     if (repoBugs) {
@@ -148,10 +155,11 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     }
   }
 
-  // Review ownership: which reviewer covered each module's PRs.
+  // Review ownership: which reviewer covered each module's PRs. Counted per
+  // distinct reviewer and distinct PR — one person approving the same PR twice
+  // (approve → re-request → approve) is still one reviewer, not "all reviews".
   const prFiles = store.allPrFiles();
-  const reviews = store.allReviews();
-  for (const review of reviews) {
+  for (const review of store.reviewerRows()) {
     const paths = prFiles.get(`${review.repo}#${review.prNumber}`);
     if (!paths) {
       continue;
@@ -159,10 +167,11 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     const touchedModules = new Set(paths.map((path) => `${review.repo}:${moduleOf(path)}`));
     for (const key of touchedModules) {
       const module = acc(key);
-      module.reviewTotal += 1;
+      module.reviewedPrs.add(review.prNumber);
+      module.reviewers.add(review.reviewerLogin.toLowerCase());
       if (sameLogin(review.reviewerLogin, username)) {
-        module.userReviews += 1;
-        module.exampleReview = { prNumber: review.prNumber, id: review.id };
+        module.userReviewed = true;
+        module.exampleReview ??= { prNumber: review.prNumber, id: review.id };
       }
     }
   }
@@ -182,7 +191,11 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     const frequency = normalizeBase > 0 ? activity / normalizeBase : 0;
     const incidentWeight = 1 + Math.min(1, module.bugMentions / Math.max(1, module.total));
     const soleAuthor = module.byUser === module.total && module.total >= 3;
-    const soleReviewer = module.reviewTotal >= 2 && module.userReviews === module.reviewTotal;
+    // Sole coverage of a module's reviewed PRs needs at least two distinct PRs:
+    // the threshold keeps a single review on a single PR from reading as
+    // "irreplaceable", and distinctness keeps duplicate reviews on one PR from
+    // faking depth of coverage.
+    const soleReviewer = module.userReviewed && module.reviewers.size === 1 && module.reviewedPrs.size >= 2;
     const irreplaceability = 1 + (soleReviewer ? 0.5 : 0) + (soleAuthor ? 0.25 : 0);
 
     const factors: RiskFactor = {
@@ -196,7 +209,10 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     // module keys are "owner/name:module" — the repo prefix builds deep links.
     // Repos without the owner/name shape come from local git collection and
     // have no GitHub URL; their evidence stays link-less rather than broken.
-    const repoSlug = module.key.slice(0, module.key.indexOf(':')) || module.key;
+    // indexOf without the `|| key` fallback: on a key with no colon it returns
+    // -1 and slice(0, -1) would silently truncate the last character.
+    const colon = module.key.indexOf(':');
+    const repoSlug = colon === -1 ? module.key : module.key.slice(0, colon);
     const isGitHubRepo = /^[^/]+\/[^/]+$/.test(repoSlug);
     const githubUrl = (suffix: string): string | undefined =>
       isGitHubRepo ? `https://github.com/${repoSlug}${suffix}` : undefined;
@@ -217,7 +233,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
         kind: 'review',
         ref: `#${module.exampleReview.prNumber} review:${module.exampleReview.id}`,
         url: githubUrl(`/pull/${module.exampleReview.prNumber}#pullrequestreview-${module.exampleReview.id}`),
-        excerpt: `all ${module.reviewTotal} reviews on this module's PRs were by @${username}`,
+        excerpt: `the only reviewer on all ${module.reviewedPrs.size} reviewed PRs touching this module was @${username}`,
         repo: repoSlug,
       });
     }
@@ -235,7 +251,7 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
       `@${username} authored ${module.byUser}/${module.total} commits (${Math.round(ratio * 100)}%) touching ${module.key}`,
     ];
     if (soleReviewer) {
-      parts.push(`and was the sole reviewer on all ${module.reviewTotal} reviews of its PRs`);
+      parts.push(`and was the sole reviewer on all ${module.reviewedPrs.size} reviewed PRs touching this module`);
     }
     if (module.bugMentions > 0) {
       const issueRefs = [...module.bugIssues].map((n) => `#${n}`).join(', ');

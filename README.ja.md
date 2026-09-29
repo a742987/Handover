@@ -7,7 +7,7 @@
 > **開発者が退職しても、その知識まで連れていかれてはならない。**
 > 退職するエンジニアのユーザー名を Handover に渡せば、その人がコミットし、レビューし、そして議論してきたすべてを読み取り —— 後任者のための、証拠へのリンクが付いた製本済みの **Handover Book（引き継ぎマニュアル）** を生成します。
 
-コマンド一つ。ローカルで動作。LLM プロバイダーが設定されている場合（デフォルト）、収集されたリポジトリのコンテンツは合成のためにそのプロバイダーに送信されます。API キーが設定されていない場合、すべては決定論的にローカルで処理されます。
+コマンド一つ。ローカルで動作。リモート LLM による合成はオプトインです（`--use-llm` または `HANDOVER_LLM=1`）。指定しない限り、何もマシンの外へ送信されず、第 4〜6 章は決定論的に生成されます。
 
 ```bash
 handover gen <username> --repo owner/name
@@ -62,17 +62,17 @@ handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 | `bus-factor <username>` | チームビュー: 一人だけが commit しているモジュールはどれか。リポジトリに CODEOWNERS があればそれを統合して表示 |
 | `gate <username> --files changed.txt` | CI チェック: この変更セットは単独所有モジュールに触れるか？（`--comment`、`--fail-on-match`、`--repo owner/name` で複数リポジトリのインデックスの対象を絞れます。[`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml) を参照） |
 | `verify <username>` | 引用の存在チェック: 製本されたマニュアルが引用するすべての参照がインデックスに実在することを確認（欠落があれば終了コード 1 — CI で使いやすい。`--json` はマシン向け） |
-| `render <username>` | インデックスからマニュアルを再レンダリング（GitHub への接続なし。第 4-6 章は API キーが設定されている場合にのみ LLM プロバイダーを呼び出します。`-r` でインデックスに記録されたリポジトリを上書き可能） |
+| `render <username>` | インデックスからマニュアルを再レンダリング（GitHub への接続なし。第 4-6 章は `--use-llm` を渡し、かつ API キーが設定されている場合にのみ LLM プロバイダーを呼び出します。`-r` でインデックスに記録されたリポジトリを上書き可能） |
 
-よく使うフラグ: `--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（タイムゾーンなしの時刻は UTC として扱われます）、`--data-dir <dir>`、`--refresh`（インデックス済みの内容を再取得）、`--html`（印刷に適した HTML ツイン）、`--redact`（LLM ダイジェストとマニュアルから既知のシークレット形式を除去。`HANDOVER_REDACT=1` でも可）、`--no-llm`（キーが設定されていても LLM 合成をスキップ — 決定論的な章のみで、何もマシンの外に出ません。`HANDOVER_NO_LLM=1` でも可）。`gen` と `collect` は `--author <identity>` を受け付け、ローカルクローン内で退職するエンジニアの名前/メールアドレスを照合します。`capture --list` は記録済みの回答を出力します。`bus-factor` は CI 向けに `--top <n>`、`--window <days>`、`--json` を受け付けます。
+よく使うフラグ: `--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（タイムゾーンなしの時刻は UTC として扱われます）、`--data-dir <dir>`、`--refresh`（インデックス済みの内容を再取得）、`--html`（印刷に適した HTML ツイン）、`--redact`（LLM ダイジェストとマニュアルから既知のシークレット形式を除去。**既定でオン**）、`--use-llm` / `HANDOVER_LLM=1` ([README.md#llm-providers](README.md#llm-providers), [.env.example](.env.example))、`--no-redact`（リポジトリのテキストをそのまま残す。`HANDOVER_NO_REDACT=1` でも可）、`--no-llm`（キーが設定されていても LLM 合成をスキップ — 決定論的な章のみで、何もマシンの外に出ません。`HANDOVER_NO_LLM=1` でも可）。`gen` と `collect` は `--author <identity>` を受け付け、ローカルクローン内で退職するエンジニアの名前/メールアドレスを照合します。`capture --list` は記録済みの回答を出力します。`bus-factor` は CI 向けに `--top <n>`、`--window <days>`、`--json` を受け付けます。
 
 ### LLM プロバイダー
 
-第 1〜3 章はインデックスから決定論的に計算されます — API キーの有無にかかわらず常に動作します。第 4〜6 章は LLM によって生成されますが、**キーがなければ決定論的な要約にフォールバック**し、失敗することはありません。
+第 1〜3 章はインデックスから決定論的に計算されます — API キーの有無にかかわらず常に動作します。第 4〜6 章は `--use-llm` を渡した場合にのみ LLM によって生成されます（**キーがなければ決定論的な要約にフォールバック**し、失敗することはありません）。
 
 - **Anthropic** — `ANTHROPIC_API_KEY` を設定（デフォルトのプロバイダー）
 - **OpenAI** — `OPENAI_API_KEY` を設定し、`--provider openai` を付けて実行
-- **Ollama** — 完全ローカル、キー不要: Ollama を起動して `--provider ollama` を付けて実行
+- **Ollama** — 完全ローカル、キー不要: Ollama を起動して `--provider ollama --use-llm` を付けて実行。`--use-llm` は必須 — `--provider` はプロバイダーの選択にすぎず、LLM 合成は明示的に有効化する必要があります。
 
 すべての LLM 章には一つの厳格なルールが適用されます: **証拠チェーンがあるか、何も書かないか。**モデルが commit、PR、レビュー、issue の参照で裏付けられない主張には *(inference)*（推論）のラベルを付けなければなりません — 検証できない断言は引き継ぎ文書に置く場所がありません。
 
@@ -101,7 +101,7 @@ risk = sole_contribution_ratio
 
 ## エディタプラグイン
 
-同一の CLI が 3 つの統合を駆動します。共通レイヤーは**組み込みの MCP サーバー**（`handover-mcp`、npm パッケージに同梱）で、`handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（追問に答えるための読み取り専用の証拠検索）、`handover_render` をツールとして公開します — CLI をシェル経由で呼び出すことなく、どの MCP クライアントでも利用できます。
+同一の CLI が 3 つの統合を駆動します。共通レイヤーは**組み込みの MCP サーバー**（`handover-mcp`、npm パッケージに同梱）で、`handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（追問に答えるための読み取り専用の証拠検索）、`handover_render`、`handover_verify`（証拠引用をインデックスに対して検証）をツールとして公開します — CLI をシェル経由で呼び出すことなく、どの MCP クライアントでも利用できます。
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -129,7 +129,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
    ```
 2. [`codex/handover.md`](codex/handover.md) を `~/.codex/prompts/handover.md` にコピーし、`/handover <username> --repo owner/name` を実行。
 
-**その他の MCP クライアント**（Cursor、ZCode など）— `handover-mcp` を stdio サーバーとして登録するだけ。どこでも同じ 6 つのツールが使えます。
+**その他の MCP クライアント**（Cursor、ZCode など）— `handover-mcp` を stdio サーバーとして登録するだけ。どこでも同じ 7 つのツールが使えます。
 
 ## プライバシーと倫理 — 誰かのために実行する前に読んでください
 

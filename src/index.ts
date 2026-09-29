@@ -1,7 +1,7 @@
 export type * from './types.js';
-export { loadConfig, DEFAULT_MODELS } from './config.js';
+export { loadConfig, DEFAULT_MODELS, confineDataDir, confineGitDir, parseGitHubApiUrl } from './config.js';
 export type { HandoverConfig, LlmProviderName } from './config.js';
-export { HandoverStore } from './store/sqlite.js';
+export { HandoverStore, releaseOpenStores } from './store/sqlite.js';
 export { GitHubCollector } from './collect/github.js';
 export type { CollectOptions, CollectResult } from './collect/github.js';
 export { GitDirectoryCollector, resolveNumstatPath } from './collect/git.js';

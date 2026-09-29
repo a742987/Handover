@@ -108,6 +108,26 @@ describe('computeRisk', () => {
     expect(risks[0]?.factors.irreplaceability).toBeGreaterThan(1);
   });
 
+  it('does not read repeated reviews of one PR as sole-reviewer coverage', () => {
+    const store = HandoverStore.inMemory();
+    for (let i = 0; i < 4; i += 1) {
+      store.upsertCommit(commit(`r${i}`.padEnd(40, '0'), 'alice', isoDaysAgo(1 + i), 'payments/charge.ts'));
+    }
+    store.upsertPrFiles(REPO, 21, ['payments/charge.ts']);
+    // the common approve → re-request → approve pattern: two review rows, one
+    // reviewer, one PR — counting rows made this read as "covered everything"
+    store.upsertReview({
+      id: 31, repo: REPO, prNumber: 21, reviewerLogin: 'alice', state: 'APPROVED', submittedAt: isoDaysAgo(2), body: '', comments: [],
+    });
+    store.upsertReview({
+      id: 32, repo: REPO, prNumber: 21, reviewerLogin: 'alice', state: 'APPROVED', submittedAt: isoDaysAgo(1), body: '', comments: [],
+    });
+    const risks = computeRisk(store, 'alice', { now: NOW, windowDays: 90, topN: 5 });
+    expect(risks[0]?.module).toBe(`${REPO}:payments`);
+    // sole author adds +0.25; the duplicated reviews must not add the reviewer's +0.5
+    expect(risks[0]?.factors.irreplaceability).toBe(1.25);
+  });
+
   it('omits GitHub deep links for modules from local-only repositories', () => {
     const store = HandoverStore.inMemory();
     for (let i = 0; i < 3; i += 1) {

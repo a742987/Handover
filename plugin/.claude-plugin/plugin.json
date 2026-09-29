@@ -1,7 +1,7 @@
 {
   "name": "handover",
   "description": "When a developer leaves, their knowledge shouldn't — generate a bound, evidence-linked Handover Book from Git history and PR discussions.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "mcpServers": {
     "handover": {
       "command": "handover-mcp",

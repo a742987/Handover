@@ -7,7 +7,7 @@
 > **當一位開發者離開時，他的知識不應該跟著離開。**
 > 把離職工程師的帳號名稱交給 Handover，它會讀取他提交過、審核過、為之爭論過的一切 —— 然後為接任者產出一本裝訂成冊、證據可溯的 **Handover Book（交接手冊）**。
 
-一行指令。在本機執行。設定 LLM 提供者時（預設行為），收集到的儲存庫內容會被傳送至該提供者進行合成；未設定 API 金鑰時，所有內容都保持確定性的本機處理。
+一行指令。在本機執行。遠端 LLM 合成需明確開啟（`--use-llm` 或 `HANDOVER_LLM=1`）；未開啟時，任何內容都不會離開本機，第 4-6 章以確定性方式生成。
 
 ```bash
 handover gen <username> --repo owner/name
@@ -62,17 +62,17 @@ handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 | `bus-factor <username>` | 團隊視角：哪些模組只有一個人在提交，並在儲存庫有 CODEOWNERS 時將其合併 |
 | `gate <username> --files changed.txt` | CI 檢查：這組變更是否觸及僅由單人持有的模組？（`--comment`、`--fail-on-match`、`--repo owner/name` 用於限定多儲存庫索引；範例見 [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)） |
 | `verify <username>` | 引用存在性檢查：手冊中引用的每一條證據 ref 都必須存在於索引中（有缺失時結束代碼為 1 —— 可用於 CI，`--json` 供機器讀取） |
-| `render <username>` | 從索引重新產出手冊，不連上 GitHub（第 4-6 章僅在設定了 API 金鑰時才呼叫 LLM 提供方；可用 `-r` 覆寫索引中記錄的儲存庫） |
+| `render <username>` | 從索引重新產出手冊，不連上 GitHub（第 4-6 章僅在傳入 `--use-llm` 且設定了 API 金鑰時才呼叫 LLM 提供方；可用 `-r` 覆寫索引中記錄的儲存庫） |
 
-常用參數：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（省略時區的時刻按 UTC 處理）、`--data-dir <dir>`、`--refresh`（重新抓取已索引的內容）、`--html`（可直接列印的 HTML 雙胞胎）、`--redact`（在送入 LLM 摘要與成書前清除已知格式的機密；也可用 `HANDOVER_REDACT=1`）、`--no-llm`（即使設定了金鑰也跳過 LLM 合成 —— 僅輸出確定性章節，任何內容都不離開本機；也可用 `HANDOVER_NO_LLM=1`）。`gen` 與 `collect` 還接受 `--author <identity>`，用於在本機 git clone 中比對離職者的姓名/電子郵件；`capture --list` 列出已錄製的回答；`bus-factor` 支援 `--top <n>`、`--window <days>` 與 `--json`（供 CI 使用）。
+常用參數：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（省略時區的時刻按 UTC 處理）、`--data-dir <dir>`、`--refresh`（重新抓取已索引的內容）、`--html`（可直接列印的 HTML 雙胞胎）、`--redact`（在送入 LLM 摘要與成書前清除已知格式的機密；**預設開啟**）、`--use-llm` / `HANDOVER_LLM=1` ([README.md#llm-providers](README.md#llm-providers), [.env.example](.env.example))、`--no-redact`（保留倉庫文字原樣；也可用 `HANDOVER_NO_REDACT=1`）、`--no-llm`（即使設定了金鑰也跳過 LLM 合成 —— 僅輸出確定性章節，任何內容都不離開本機；也可用 `HANDOVER_NO_LLM=1`）。`gen` 與 `collect` 還接受 `--author <identity>`，用於在本機 git clone 中比對離職者的姓名/電子郵件；`capture --list` 列出已錄製的回答；`bus-factor` 支援 `--top <n>`、`--window <days>` 與 `--json`（供 CI 使用）。
 
 ### LLM 提供方
 
-第 1–3 章直接從索引以確定性方式計算 —— 無論有沒有 API key 都能正常運作。第 4–6 章由 LLM 生成；**沒有 key 時會退回確定性摘要**，而不會報錯失敗。
+第 1–3 章直接從索引以確定性方式計算 —— 無論有沒有 API key 都能正常運作。第 4–6 章僅在傳入 `--use-llm` 時由 LLM 生成（**沒有 key 時會退回確定性摘要**，而不會報錯失敗）。
 
 - **Anthropic** —— 設定 `ANTHROPIC_API_KEY`（預設提供方）
 - **OpenAI** —— 設定 `OPENAI_API_KEY`，並以 `--provider openai` 執行
-- **Ollama** —— 完全本機、無需 key：啟動 Ollama 後以 `--provider ollama` 執行
+- **Ollama** —— 完全本機、無需 key：啟動 Ollama 後以 `--provider ollama --use-llm` 執行。`--use-llm` 是必需的 —— `--provider` 只負責選擇提供方，LLM 合成本身必須顯式開啟。
 
 每個 LLM 章節都遵守一條硬性規則：**要有證據鏈，否則不作數。**模型無法以 commit、PR、review 或 issue 引用作為依據的論述，必須標註 *(inference)*（推論）—— 無法驗證的說法沒有資格出現在交接文件裡。
 
@@ -101,7 +101,7 @@ risk = sole_contribution_ratio
 
 ## 編輯器外掛
 
-同一個 CLI 驅動三套整合。共通層是一個**內建 MCP 伺服器**（`handover-mcp`，隨 npm 套件一併發布），它把 `handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（唯讀證據檢索，用於回答追問）與 `handover_render` 公開為工具 —— 任何 MCP 用戶端都可以直接使用，無需呼叫 CLI。
+同一個 CLI 驅動三套整合。共通層是一個**內建 MCP 伺服器**（`handover-mcp`，隨 npm 套件一併發布），它把 `handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（唯讀證據檢索，用於回答追問）、`handover_render` 與 `handover_verify`（對照索引校驗每條證據引用）公開為工具 —— 任何 MCP 用戶端都可以直接使用，無需呼叫 CLI。
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -129,7 +129,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
    ```
 2. 把 [`codex/handover.md`](codex/handover.md) 複製到 `~/.codex/prompts/handover.md`，然後執行 `/handover <username> --repo owner/name`。
 
-**其他任何 MCP 用戶端**（Cursor、ZCode 等）—— 把 `handover-mcp` 註冊為 stdio 伺服器即可；到處都是同樣的六個工具。
+**其他任何 MCP 用戶端**（Cursor、ZCode 等）—— 把 `handover-mcp` 註冊為 stdio 伺服器即可；到處都是同樣的七個工具。
 
 ## 隱私與倫理 —— 在為別人執行之前請先讀這一節
 

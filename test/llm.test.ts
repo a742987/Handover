@@ -51,3 +51,71 @@ describe('ollama provider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   }, 10_000);
 });
+
+describe('a provider reply is validated, not cast', () => {
+  // `as { choices?: … }` silenced the compiler but checked nothing; the endpoint
+  // (a GitHub Enterprise relay, a local Ollama, a proxy returning HTML) is as
+  // untrusted as a commit message. A malformed reply must read as a named shape
+  // problem that falls the chapter back, not as a TypeError from `.trim()`.
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['openai content as a part array', { choices: [{ message: { content: [{ type: 'text', text: 'hi' }] } }] }],
+    ['openai content as a number', { choices: [{ message: { content: 17 } }] }],
+    ['openai content as an object', { choices: [{ message: { content: { evil: true } } }] }],
+  ];
+
+  it.each(cases)('rejects %s instead of throwing a TypeError', async (_label, body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
+    vi.stubEnv('OPENAI_API_KEY', 'sk-test');
+    const provider = createProvider(loadConfig({ provider: 'openai' }));
+    await expect(provider.complete('system', 'user')).rejects.toThrow(/expected text/);
+  });
+
+  it('accepts the null and missing shapes as empty text (a filtered reply)', async () => {
+    for (const body of [{ choices: [{ message: { content: null } }] }, { choices: [{ message: {} }] }, { choices: [] }]) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(body), { status: 200 })));
+      vi.stubEnv('OPENAI_API_KEY', 'sk-test');
+      const provider = createProvider(loadConfig({ provider: 'openai' }));
+      // empty results are then rejected by the chapter's length floor, not by a crash
+      await expect(provider.complete('system', 'user')).resolves.toBe('');
+    }
+  });
+
+  it('rejects an Anthropic content block whose text is not a string', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ content: [{ type: 'text', text: { a: 1 } }] }), { status: 200 })),
+    );
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test');
+    const provider = createProvider(loadConfig({ provider: 'anthropic' }));
+    await expect(provider.complete('system', 'user')).rejects.toThrow(/expected text/);
+  });
+
+  it('rejects an Ollama message whose content is an array', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ message: { content: ['a', 'b'] } }), { status: 200 })),
+    );
+    const config = loadConfig({ provider: 'ollama', model: 'test-model', ollamaUrl: 'http://127.0.0.1:11434' });
+    await expect(createProvider(config).complete('system', 'user')).rejects.toThrow(/expected text/);
+  });
+
+  it('rejects a reply whose whole body is not an object', async () => {
+    // Optional chaining reads properties off null and primitives, so `null` used
+    // to reach `data.message` and die with a TypeError at the far end of the call.
+    for (const body of ['null', '42', '"just a string"', 'true']) {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(body, { status: 200 })));
+      const config = loadConfig({ provider: 'ollama', model: 'test-model', ollamaUrl: 'http://127.0.0.1:11434' });
+      await expect(createProvider(config).complete('system', 'user')).rejects.toThrow(/non-object body/);
+    }
+  });
+
+  it('tolerates a null entry inside an Anthropic content array', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ content: [null, 'bare string', { type: 'text', text: 'kept' }] }), { status: 200 })),
+    );
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test');
+    const provider = createProvider(loadConfig({ provider: 'anthropic' }));
+    await expect(provider.complete('system', 'user')).resolves.toBe('kept');
+  });
+});

@@ -76,6 +76,21 @@ describe('extractCitations', () => {
     expect(raws).toContain('other/web#5 review:999');
     expect(raws).toHaveLength(6);
   });
+
+  it('does not read bracketed dates, counters or ids in prose as commit shas', () => {
+    // Chapter 6 embeds the departing engineer's free-text answers verbatim, so
+    // "[20240101]" used to fail `handover verify` on a perfectly clean book.
+    const markdown = 'Planned the migration for [20240101], see ticket [1234567] and [9999999].';
+    const raws = extractCitations(markdown).map((token) => token.raw);
+    expect(raws).toEqual([]);
+  });
+
+  it('still accepts the null sha and a short sha with hex letters', () => {
+    const raws = extractCitations('[0000000] and [deadbee] and a full [0123456789abcdef0123456789abcdef01234567]').map(
+      (token) => token.raw,
+    );
+    expect(raws).toEqual(['0000000', 'deadbee', '0123456789abcdef0123456789abcdef01234567']);
+  });
 });
 
 describe('verifyCitations', () => {
@@ -114,6 +129,20 @@ describe('verifyCitations', () => {
       expect(report.checked.find((ref) => ref.raw === 'review:42')?.ok).toBe(true);
       expect(report.checked.find((ref) => ref.raw === 'acme/api review:42')?.ok).toBe(true);
       expect(report.checked.find((ref) => ref.raw === 'review:999')?.ok).toBe(false);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('accepts upper-case commit citations by normalizing the sha', () => {
+    const store = seed();
+    try {
+      const report = verifyCitations(store, 'book.md', 'Cited [ABC1234] in caps, and [`ABC1234`] backticked.');
+      expect(report.missingCount).toBe(0);
+      expect(report.checked).toHaveLength(1);
+      expect(report.checked[0]?.raw).toBe('ABC1234');
+      expect(report.checked[0]?.sha).toBe('abc1234');
+      expect(report.checked[0]?.ok).toBe(true);
     } finally {
       store.close();
     }

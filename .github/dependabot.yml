@@ -1,0 +1,20 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      patch-and-minor:
+        update-types: [patch, minor]
+
+  # Keeps the CI and Release workflows' actions current. Once each `uses:` line is
+  # pinned to a commit SHA, Dependabot updates the SHA together with the version
+  # comment, so pinning does not mean falling behind.
+  - package-ecosystem: github-actions
+    directory: '/'
+    schedule:
+      interval: weekly
+      day: monday

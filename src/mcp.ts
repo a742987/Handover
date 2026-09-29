@@ -2,18 +2,20 @@
 /**
  * MCP server for Handover.
  *
- * Exposes the pipeline as six tools — generate, collect, risk, capture,
- * search, render — so any MCP client (Claude Code, Codex, Cursor, ZCode, …)
+ * Exposes the pipeline as seven tools — generate, collect, risk, capture,
+ * search, render, verify — so any MCP client (Claude Code, Codex, Cursor, ZCode, …)
  * can drive it without shelling out. stdio transport; launch with
  * `handover-mcp`.
  */
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { loadConfig, type LlmProviderName } from './config.js';
+import { confineDataDir, confineGitDir, loadConfig, type LlmProviderName } from './config.js';
+import { printLine } from './print.js';
+import { sanitizeProse } from './store/sanitize.js';
 import { sameLogin } from './identity.js';
 import { parseSince } from './args.js';
 import { applyAnswers } from './capture.js';
@@ -23,6 +25,7 @@ import { GitDirectoryCollector, previewLocalRepoKeys, recordedLocalRepoKeys } fr
 import { computeRisk } from './risk/engine.js';
 import { redact as redactSecrets } from './render/redact.js';
 import { searchIndex, type SearchResultItem } from './search.js';
+import { verifyCitations } from './verify.js';
 import { HandoverStore } from './store/sqlite.js';
 import { requireIndex } from './store/index-check.js';
 import type { RiskItem } from './types.js';
@@ -35,14 +38,72 @@ const providerSchema = z
   .optional()
   .describe('LLM provider for chapters 4-6; omit to use HANDOVER_PROVIDER or the anthropic default');
 
+const dataDirDescription =
+  'directory for the SQLite index and the generated book; must be inside the directory this server was launched from (or inside HANDOVER_DATA_ROOT). Defaults to handover-data.';
+
 const dataDirSchema = z
   .string()
   .optional()
-  .describe('directory for the SQLite index and the generated book (default: handover-data, or HANDOVER_DATA_DIR)');
+  .transform((value, ctx) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    try {
+      return confineDataDir(value);
+    } catch (error) {
+      ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : String(error) });
+      return z.NEVER;
+    }
+  })
+  .describe(dataDirDescription);
 
-const reposSchema = z
+// Same confinement discipline as dataDir: gitDirs makes the collector read a
+// git repository from disk, so a model-supplied path must stay inside roots the
+// operator chose — otherwise one injected instruction reads any clone on the
+// machine into the transcript.
+const gitDirsDescription =
+  'local git clone directories to read (no network or token needed); each must be inside the directory this server was launched from, HANDOVER_DATA_ROOT, or an operator-configured HANDOVER_GIT_ROOT';
+
+const gitDirsSchema = z
   .array(z.string())
+  .optional()
+  .transform((value, ctx) => {
+    if (value === undefined) {
+      return undefined;
+    }
+    const out: string[] = [];
+    for (const dir of value) {
+      try {
+        out.push(confineGitDir(dir));
+      } catch (error) {
+        ctx.addIssue({ code: 'custom', message: error instanceof Error ? error.message : String(error) });
+        return z.NEVER;
+      }
+    }
+    return out;
+  })
+  .describe(gitDirsDescription);
+
+// owner/name is the shape every downstream URL builder and store key assumes;
+// rejecting anything else here surfaces a readable error instead of a raw
+// GitHub API 404 for a mangled repo string.
+const reposSchema = z
+  .array(
+    z
+      .string()
+      .regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/, 'expects owner/name, e.g. acme/api'),
+  )
+  .max(100)
   .describe('owner/name repositories to read, e.g. ["acme/api", "acme/web"]');
+
+// render's repos list accepts the index's own keys, which include local clone
+// basenames (no owner/name shape), so it is length-bounded rather than
+// shape-checked — but it is still a model-supplied list and cannot be unbounded.
+const renderReposSchema = z
+  .array(z.string().max(512))
+  .max(100)
+  .optional()
+  .describe('owner/name repositories (defaults to the ones recorded in the index)');
 
 // Same validation (and UTC normalization) as the CLI's --since flag — the shape
 // check alone let impossible dates like 2024-13-45 through to the GitHub API.
@@ -70,13 +131,24 @@ function canon(username: string): string {
   return username.toLowerCase();
 }
 
+/**
+ * LLM synthesis is opt-in: absent both arguments the default (off) from the
+ * environment/config applies. An explicit noLlm=true always wins.
+ */
+function resolveNoLlm(noLlm: boolean | undefined, useLlm: boolean | undefined): boolean | undefined {
+  if (noLlm === true) {
+    return true;
+  }
+  return useLlm === true ? false : undefined;
+}
+
 function textResult(payload: unknown, progress: string[]): {
   content: Array<{ type: 'text'; text: string }>;
 } {
   return {
     content: [
-      { type: 'text', text: progress.join('\n') },
-      { type: 'text', text: JSON.stringify(payload, null, 2) },
+      { type: 'text', text: sanitizeProse(progress.join('\n')) },
+      { type: 'text', text: sanitizeProse(JSON.stringify(payload, null, 2)) },
     ],
   };
 }
@@ -86,7 +158,12 @@ function errorResult(error: unknown): {
   isError: true;
 } {
   return {
-    content: [{ type: 'text', text: `error: ${error instanceof Error ? error.message : String(error)}` }],
+    content: [
+      {
+        type: 'text',
+        text: sanitizeProse(`error: ${error instanceof Error ? error.message : String(error)}`),
+      },
+    ],
     isError: true,
   };
 }
@@ -124,16 +201,15 @@ server.registerTool(
       'Full pipeline: collect a departing engineer’s history (commits, PRs, reviews, issues — from GitHub ' +
       'repos and/or local git clones) into a local SQLite index, compute the Risk Top 5, and render the bound, ' +
       'evidence-linked Handover Book. Second runs for the same person are incremental and near-instant. ' +
-      'Requires GITHUB_TOKEN for GitHub repos; --git-dir-style local collection needs no token.',
+      'Public GitHub repos need no token (60 requests/hour); set GITHUB_TOKEN for private repos or a large ' +
+      'collection. gitDirs reads local clones and needs neither.',
     inputSchema: {
       username: usernameSchema,
       repos: reposSchema.describe('owner/name GitHub repositories to read (may be empty when gitDirs is set)'),
-      gitDirs: z
-        .array(z.string())
-        .optional()
-        .describe('local git clone directories to read (no network or token needed)'),
+      gitDirs: gitDirsSchema,
       authorIdentity: z
         .string()
+        .max(320)
         .optional()
         .describe('git author name/email substring identifying the engineer in local repos (default: username)'),
       since: sinceSchema,
@@ -141,15 +217,19 @@ server.registerTool(
       model: z.string().optional().describe('LLM model override'),
       dataDir: dataDirSchema,
       refresh: z.boolean().optional().describe('re-fetch commit details even for already-indexed commits (default false)'),
-      redact: z.boolean().optional().describe('scrub known secret formats from the LLM digest and the rendered book'),
+      redact: z.boolean().optional().describe('scrub known secret formats from the digest and the book (default: on)'),
       html: z.boolean().optional().describe('also write a print-ready single-file HTML twin of the book'),
       noLlm: z
         .boolean()
         .optional()
-        .describe('force deterministic chapters 4-6 even when an LLM API key is configured — nothing leaves this machine'),
+        .describe('force deterministic chapters 4-6 — nothing leaves this machine (already the default)'),
+      useLlm: z
+        .boolean()
+        .optional()
+        .describe('opt IN to LLM synthesis of chapters 4-6: the collected evidence digest is sent to the configured provider'),
     },
   },
-  async ({ username, repos, gitDirs, authorIdentity, since, provider, model, dataDir, refresh, redact: redactOn, html, noLlm }) => {
+  async ({ username, repos, gitDirs, authorIdentity, since, provider, model, dataDir, refresh, redact: redactOn, html, noLlm, useLlm }) => {
     const progress: string[] = [];
     try {
       const result = await generateHandoverBook({
@@ -164,7 +244,7 @@ server.registerTool(
         refresh,
         redact: redactOn,
         html,
-        noLlm,
+        noLlm: resolveNoLlm(noLlm, useLlm),
         onProgress: (message) => progress.push(message),
       });
       return textResult(
@@ -194,17 +274,16 @@ server.registerTool(
     description:
       'Index a departing engineer’s history (commits, PRs, reviews, issues) into the local SQLite index ' +
       'without rendering the book. Already-indexed items are skipped. Use this to build or refresh an index ' +
-      'before generating or while exploring. GitHub repos require GITHUB_TOKEN; gitDirs reads local clones ' +
+      'before generating or while exploring. Public GitHub repos work with no token, at 60 requests/hour; ' +
+      'GITHUB_TOKEN is needed for private repos and to raise that limit. gitDirs reads local clones ' +
       'with no token.',
     inputSchema: {
       username: usernameSchema,
       repos: reposSchema.describe('owner/name GitHub repositories to read (may be empty when gitDirs is set)'),
-      gitDirs: z
-        .array(z.string())
-        .optional()
-        .describe('local git clone directories to read (no network or token needed)'),
+      gitDirs: gitDirsSchema,
       authorIdentity: z
         .string()
+        .max(320)
         .optional()
         .describe('git author name/email substring identifying the engineer in local repos (default: username)'),
       since: sinceSchema,
@@ -215,6 +294,12 @@ server.registerTool(
   async ({ username, repos, gitDirs, authorIdentity, since, dataDir, refresh }) => {
     const progress: string[] = [];
     try {
+      // Validate before anything is created: failing after the store opens
+      // would leave an empty index behind and defeat requireIndex for every
+      // read tool that follows.
+      if (repos.length === 0 && !gitDirs?.length) {
+        throw new Error('pass repos (owner/name) and/or gitDirs (local clone paths)');
+      }
       const user = canon(username);
       const config = loadConfig({ dataDir });
       await mkdir(config.dataDir, { recursive: true });
@@ -231,7 +316,7 @@ server.registerTool(
         ];
         let collected = null;
         if (repos.length > 0) {
-          const collector = new GitHubCollector(config.githubToken);
+          const collector = new GitHubCollector(config.githubToken, undefined, { baseUrl: config.githubApiUrl });
           collected = await collector.collectInto(store, user, [...new Set(repos)], {
             since,
             refresh,
@@ -306,7 +391,12 @@ server.registerTool(
       username: usernameSchema,
       dataDir: dataDirSchema,
       answers: z
-        .array(z.object({ question: z.string().min(1), answer: z.string().min(1) }))
+        .array(
+          z.object({
+            question: z.string().min(1).max(10_000),
+            answer: z.string().min(1).max(10_000),
+          }),
+        )
         .max(100)
         .describe('question/answer pairs to capture'),
       clear: z.boolean().optional().describe('delete existing captured answers first (default false)'),
@@ -383,19 +473,23 @@ server.registerTool(
       'configured LLM provider when its API key is set in the environment; otherwise deterministic fallbacks are used.',
     inputSchema: {
       username: usernameSchema,
-      repos: z.array(z.string()).optional().describe('owner/name repositories (defaults to the ones recorded in the index)'),
+      repos: renderReposSchema,
       provider: providerSchema,
       model: z.string().optional().describe('LLM model override'),
       dataDir: dataDirSchema,
-      redact: z.boolean().optional().describe('scrub known secret formats from the LLM digest and the rendered book'),
+      redact: z.boolean().optional().describe('scrub known secret formats from the digest and the book (default: on)'),
       html: z.boolean().optional().describe('also write a print-ready single-file HTML twin of the book'),
       noLlm: z
         .boolean()
         .optional()
-        .describe('force deterministic chapters 4-6 even when an LLM API key is configured'),
+        .describe('force deterministic chapters 4-6 (already the default)'),
+      useLlm: z
+        .boolean()
+        .optional()
+        .describe('opt IN to LLM synthesis: the index digest is sent to the configured provider'),
     },
   },
-  async ({ username, repos, provider, model, dataDir, redact: redactOn, html, noLlm }) => {
+  async ({ username, repos, provider, model, dataDir, redact: redactOn, html, noLlm, useLlm }) => {
     const progress: string[] = [];
     try {
       const config = loadConfig({ dataDir });
@@ -408,7 +502,7 @@ server.registerTool(
         dataDir,
         redact: redactOn,
         html,
-        noLlm,
+        noLlm: resolveNoLlm(noLlm, useLlm),
         onProgress: (message) => progress.push(message),
       });
       return textResult(
@@ -431,4 +525,77 @@ server.registerTool(
   },
 );
 
-await server.connect(new StdioServerTransport());
+/**
+ * The agent-facing citation check. Without it a model can present a book it never
+ * verified — the one property this tool exists to guarantee — so it is exposed
+ * here as well as on the CLI.
+ *
+ * Deliberately no `file` argument: the book's location is derived from the
+ * (confined) data directory and the username. A model-supplied path would turn a
+ * citation checker into a read-anything primitive, and anything it read could be
+ * echoed back into the transcript.
+ */
+server.registerTool(
+  'handover_verify',
+  {
+    title: 'Verify Book Citations',
+    description:
+      'Check that every evidence ref cited in a generated Handover Book (commit shas, PR/issue numbers, review ' +
+      'ids) actually exists in the local index, and report the ones that do not. No network access. Run this ' +
+      'after handover_generate or handover_render before presenting the book as verified.',
+    inputSchema: {
+      username: usernameSchema,
+      dataDir: dataDirSchema,
+    },
+  },
+  async ({ username, dataDir }) => {
+    const progress: string[] = [];
+    try {
+      const user = canon(username);
+      const config = loadConfig({ dataDir });
+      await requireIndex(config.dataDir, user, 'run the handover_generate or handover_collect tool first.');
+      const bookPath = path.join(config.dataDir, `handover-book-${user}.md`);
+      const markdown = await readFile(bookPath, 'utf8').catch(() => {
+        throw new Error(`no book at ${bookPath} — run handover_generate or handover_render first.`);
+      });
+      const store = new HandoverStore(path.join(config.dataDir, `${user}.db`));
+      let report;
+      try {
+        report = verifyCitations(store, bookPath, markdown);
+      } finally {
+        store.close();
+      }
+      const missing = report.checked.filter((item) => !item.ok);
+      progress.push(
+        `Checked ${report.checked.length} citation(s) against ${report.repos.length} repo(s) in scope.`,
+      );
+      return textResult(
+        {
+          username: user,
+          bookPath,
+          repos: report.repos,
+          citations: report.checked.length,
+          missingCount: report.missingCount,
+          // the model's job is to report or fix these, so they come back in full;
+          // the passing list would only spend context
+          missing: missing.map((item) => ({
+            ref: item.raw,
+            expectedIn: item.repo ?? report.repos.join(', '),
+          })),
+        },
+        progress,
+      );
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+);
+
+try {
+  await server.connect(new StdioServerTransport());
+} catch (error) {
+  // a failed transport start should not surface as an unhandled rejection with
+  // a raw stack — the client gets one clean line on stderr instead
+  printLine(process.stderr, `error: failed to start the MCP server: ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+}
