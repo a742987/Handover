@@ -1,4 +1,4 @@
-import { moduleOf } from './engine.js';
+import { moduleOf, isBotLogin } from './engine.js';
 import { codeownersMetaKey, ownersFor, parseCodeowners } from '../collect/codeowners.js';
 import type { HandoverStore } from '../store/sqlite.js';
 
@@ -46,7 +46,7 @@ export function computeBusFactor(store: HandoverStore, options: BusFactorOptions
   const rulesByRepo = new Map<string, ReturnType<typeof parseCodeowners>>();
 
   for (const commit of store.allCommits()) {
-    if (commit.authorLogin === 'unknown') {
+    if (commit.authorLogin === 'unknown' || isBotLogin(commit.authorLogin)) {
       continue;
     }
     const authoredAtMs = Date.parse(commit.authoredAt);

@@ -37,6 +37,14 @@ describe('parseSince', () => {
   it('rejects well-formed but impossible dates', () => {
     expect(() => parseSince('2024-13-45')).toThrow(InvalidArgumentError);
   });
+
+  it('rejects impossible dates that Date.parse would silently roll over', () => {
+    for (const bad of ['2024-02-30', '2023-02-29', '2024-01-01T24:00:00', '2024-01-01T10:61:00', '2024-01-01T10:00:61']) {
+      expect(() => parseSince(bad)).toThrow(InvalidArgumentError);
+    }
+    // the real leap day is fine
+    expect(parseSince('2024-02-29')).toBe('2024-02-29T00:00:00.000Z');
+  });
 });
 
 describe('parseUsername', () => {

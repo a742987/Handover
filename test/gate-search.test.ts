@@ -152,4 +152,33 @@ describe('searchIndex', () => {
     expect(searchIndex(store, { query: 'queue', repo: 'api' }).count).toBeGreaterThan(0);
     expect(searchIndex(store, { query: 'queue', repo: 'evil/api' }).count).toBe(0);
   });
+
+  it('excludes undated records from a since-restricted query', () => {
+    // a pending review carries submittedAt = null — it cannot prove it is in-window
+    const undated = HandoverStore.inMemory();
+    undated.upsertCommit({
+      sha: 'd'.repeat(40),
+      repo: 'acme/api',
+      authorLogin: 'alice',
+      authoredAt: '',
+      message: 'date unknown',
+      additions: 1,
+      deletions: 0,
+      files: [{ path: 'queue/consume.ts', additions: 1, deletions: 0 }],
+    });
+    undated.upsertReview({
+      id: 901,
+      repo: 'acme/api',
+      prNumber: 9,
+      reviewerLogin: 'carol',
+      state: 'PENDING',
+      submittedAt: null,
+      body: 'pending review text',
+      comments: [],
+    });
+    expect(searchIndex(undated, { since: '2020-01-01T00:00:00Z' }).count).toBe(0);
+    // without the since filter the same records are searchable
+    expect(searchIndex(undated, { query: 'pending review' }).count).toBe(1);
+    undated.close();
+  });
 });

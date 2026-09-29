@@ -51,7 +51,12 @@ async function postJson(url: string, headers: Record<string, string>, body: unkn
       break;
     }
     const retryAfter = Number(response.headers.get('retry-after'));
-    await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : BACKOFF_BASE_MS * 2 ** attempt);
+    // Cap Retry-After: a hostile or broken proxy must not stall the run for hours.
+    await sleep(
+      Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter * 1000, 60_000)
+        : BACKOFF_BASE_MS * 2 ** attempt,
+    );
   }
   throw lastError;
 }

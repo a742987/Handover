@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { sameLogin } from '../identity.js';
 import type { BookChapter, ChapterId, RiskItem } from '../types.js';
 import type { HandoverStore } from '../store/sqlite.js';
-import { escapeHtmlText, escapeMarkdown } from '../render/escape.js';
+import { escapeHtmlText, escapeMarkdown, codeSpan } from '../render/escape.js';
 import { evidenceToken } from '../render/refs.js';
 import { redact } from '../render/redact.js';
 import { computeRisk, moduleOf } from '../risk/engine.js';
@@ -198,12 +198,12 @@ function codePanorama(input: SynthesisInput): BookChapter {
     lines.push('|---|---|---|---|');
     for (const module of modules.slice(0, 25)) {
       lines.push(
-        `| \`${escapeMarkdown(module.module)}\` | ${module.total} | ${formatPercent(module.byUser / Math.max(1, module.total))} | ${module.lastTouchedAt.slice(0, 10) || '—'} |`,
+        `| ${codeSpan(module.module, true)} | ${module.total} | ${formatPercent(module.byUser / Math.max(1, module.total))} | ${module.lastTouchedAt.slice(0, 10) || '—'} |`,
       );
     }
     lines.push('');
   }
-  const top = stats.slice(0, 5).map((stat) => `\`${escapeMarkdown(stat.module)}\` in ${escapeHtmlText(stat.repo)}`);
+  const top = stats.slice(0, 5).map((stat) => `${codeSpan(stat.module)} in ${escapeHtmlText(stat.repo)}`);
   if (top.length > 0) {
     lines.push(`Their centre of gravity: ${top.join(', ')}.`);
   }
@@ -221,7 +221,7 @@ function implicitKnowledge(input: SynthesisInput): BookChapter {
   if (soleMaintainer.length > 0) {
     lines.push('### Sole or dominant author', '');
     for (const item of soleMaintainer) {
-      lines.push(`- \`${escapeMarkdown(item.module)}\` — ${formatPercent(item.factors.soleContributionRatio)} of commits by @${input.username}`);
+      lines.push(`- ${codeSpan(item.module)} — ${formatPercent(item.factors.soleContributionRatio)} of commits by @${input.username}`);
     }
     lines.push('');
   }
@@ -230,7 +230,7 @@ function implicitKnowledge(input: SynthesisInput): BookChapter {
     lines.push('### Sole reviewer', '');
     for (const item of soleReviewer) {
       const reviewRef = item.evidence.find((e) => e.kind === 'review');
-      lines.push(`- \`${escapeMarkdown(item.module)}\` — every review on this module's PRs was by @${input.username}${reviewRef ? ` ${evidenceToken(reviewRef, multiRepo)}` : ''}`);
+      lines.push(`- ${codeSpan(item.module)} — every review on this module's PRs was by @${input.username}${reviewRef ? ` ${evidenceToken(reviewRef, multiRepo)}` : ''}`);
     }
     lines.push('');
   }
@@ -254,7 +254,7 @@ function riskChapter(input: SynthesisInput): BookChapter {
     '',
   ];
   for (const risk of risks) {
-    lines.push(`### ${risk.rank}. \`${risk.module}\` — score ${risk.score.toFixed(3)}`, '');
+    lines.push(`### ${risk.rank}. ${codeSpan(risk.module)} — score ${risk.score.toFixed(3)}`, '');
     lines.push(
       `- sole contribution: ${formatPercent(risk.factors.soleContributionRatio)}`,
       `- change frequency: ${risk.factors.changeFrequency.toFixed(2)}`,
@@ -303,7 +303,7 @@ function pathFallback(input: SynthesisInput): BookChapter {
   const lines: string[] = ['A starting plan built from the risk ranking (LLM synthesis was unavailable).', ''];
   input.risks.forEach((risk, index) => {
     const week = (index % 4) + 1;
-    lines.push(`- Week ${week}: read and run \`${risk.module}\`; reconcile the evidence in ${risk.evidence.map((ref) => evidenceToken(ref, multiRepo)).join(' ') || 'the appendix'}.`);
+    lines.push(`- Week ${week}: read and run ${codeSpan(risk.module)}; reconcile the evidence in ${risk.evidence.map((ref) => evidenceToken(ref, multiRepo)).join(' ') || 'the appendix'}.`);
   });
   lines.push('', '- Before the last day: walk each Risk Top 5 item with the departing engineer and record answers in this book.');
   return { id: 5, title: CHAPTER_TITLES[5], content: lines.join('\n'), evidence: [], generatedBy: 'deterministic' };

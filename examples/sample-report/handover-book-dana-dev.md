@@ -3,7 +3,7 @@
 *When a developer leaves, their knowledge shouldn't.*
 
 - **Repositories:** demo\-shop
-- **Generated:** 2026-09-28T12:39:48.409Z
+- **Generated:** 2026-09-29T02:25:16.461Z
 - **Chapters:** 6
 - **Synthesis:** deterministic (no LLM key configured)
 
@@ -75,10 +75,10 @@ Where the data comes from, what it misses, and the few things worth confirming b
 | `payments` | 13 | 85% | 2026-08-17 |
 | `infra` | 4 | 100% | 2026-08-24 |
 | `auth` | 6 | 33% | 2026-08-10 |
-| `\(root\)` | 1 | 100% | 2026-03-01 |
+| `(root)` | 1 | 100% | 2026-03-01 |
 | `docs` | 1 | 0% | 2026-05-02 |
 
-Their centre of gravity: `payments` in demo-shop, `infra` in demo-shop, `auth` in demo-shop, `\(root\)` in demo-shop, `docs` in demo-shop.
+Their centre of gravity: `payments` in demo-shop, `infra` in demo-shop, `auth` in demo-shop, `(root)` in demo-shop, `docs` in demo-shop.
 
 ## 2. Implicit Knowledge Inventory
 
@@ -86,12 +86,12 @@ Modules where the knowledge is concentrated in one person — the successor has 
 
 ### Sole or dominant author
 
-- `demo\-shop:infra` — 100% of commits by @dana-dev
-- `demo\-shop:\(root\)` — 100% of commits by @dana-dev
+- `demo-shop:infra` — 100% of commits by @dana-dev
+- `demo-shop:(root)` — 100% of commits by @dana-dev
 
 ### Sole reviewer
 
-- `demo\-shop:payments` — every review on this module's PRs was by @dana-dev [#17 review:105]
+- `demo-shop:payments` — every review on this module's PRs was by @dana-dev [#17 review:105]
 
 ## 3. Risk Top 5
 
@@ -149,7 +149,7 @@ LLM synthesis was not available for this run, so this chapter lists the PRs with
 - [#17] **Idempotency keys for /charge and partial refunds** (demo-shop) — Fixes the double\-fire from \#9\. Every charge carries a client\-supplied idempotency key; partial refunds derive theirs from \(charge key, refund id\)\. Do not "simplify" this to server\-generated keys — a retried request must hit the same key\.
 - [#23] **Deploy script: canary step \+ 30s health check** (demo-shop) — Canary rides the same script; the 30s health\-check timeout matches the load balancer, anything shorter flaps in the EU region \(\#31\)\.
 
-## 5. The 30\-Day Path
+## 5. The 30-Day Path
 
 A starting plan built from the risk ranking (LLM synthesis was unavailable).
 
@@ -160,7 +160,7 @@ A starting plan built from the risk ranking (LLM synthesis was unavailable).
 
 - Before the last day: walk each Risk Top 5 item with the departing engineer and record answers in this book.
 
-## 6. Questions &amp; Draft Answers
+## 6. Questions & Draft Answers
 
 LLM style-transfer was unavailable; these are the questions the successor should ask @dana-dev before the last day.
 
@@ -183,17 +183,17 @@ Captured in the departing engineer’s own words with `handover capture` — the
 
 > payments/webhooks.ts. The replay guard works but the capture window is keyed off an in-memory map — one pod restart and we re-process webhooks. I would make it durable before touching anything else.
 
-   — captured 2026-09-28
+   — captured 2026-09-29
 2. **Which piece of the system looks wrong but must not be "fixed" — and what broke the last time someone tried?**
 
 > The double-submit in checkout looks like a bug; it is how we dedupe against the provider. Removing it caused issue #9 (double charges on retry). The idempotency keys in PR #17 are the fix — do not remove them.
 
-   — captured 2026-09-28
+   — captured 2026-09-29
 3. **Which deploy/migration quirk is load\-bearing?**
 
 > The canary health-check timeout in infra/deploy.sh must stay at 30s to match the load balancer; anything shorter flaps the EU region (issue #31). And always run the migration dry-run first — the users table has a hand-patched index from the 2024 incident.
 
-   — captured 2026-09-28
+   — captured 2026-09-29
 
 ## Appendix — evidence register
 

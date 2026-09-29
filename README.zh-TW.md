@@ -26,35 +26,45 @@ Handover 涵蓋其他工具無法涵蓋的隱性損失：
 3. **風險 Top 5** —— 「他離開後什麼會出問題」，逐項排序評分，每項附帶證據鏈
 4. **決策考古** —— 「當年我們為什麼這樣選」，引用真實的 PR/issue 討論原文
 5. **30 天上手路徑** —— 接任者的學習計畫
-6. **寫給未來的信** —— 接任者會問的問題，由離職開發者本人的語氣作答
+6. **問題與答案草稿** —— 交接前該問什麼，加上離職工程師本人錄製的第一人稱回答
 
 ## 快速開始
 
-環境需求：**Node ≥ 22.13**（內建 SQLite —— 無需原生編譯），以及一個用於合理速率限制的 GitHub token。
+最短路徑 —— 一行指令，無需 clone 儲存庫（需要 Node ≥ 22.13）：
 
 ```bash
-git clone https://github.com/a742987/Handover.git && cd Handover
-npm install
+npm install -g handover-book
 
-export GITHUB_TOKEN=ghp_...          # repo scope for private repos
-npm run dev -- gen <username> --repo owner/name
+# 從 GitHub 蒐集（需要 token 以取得合理的速率限制）：
+export GITHUB_TOKEN=ghp_...
+handover gen <username> --repo owner/name --html
+
+# 或者完全不用 token、不用連網 —— 直接讀取他的本機 git clone：
+handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 ```
 
 輸出位於 `handover-data/`：
 
 - `handover-data/<username>.db` —— 本機 SQLite 索引（每人一個檔案；第二次執行增量更新，幾乎瞬間完成）
-- `handover-data/handover-book-<username>.md` —— 裝訂成冊的手冊
+- `handover-data/handover-book-<username>.md` —— 裝訂成冊的手冊（加 `--html` 會同時輸出可直接列印的單一檔案 HTML —— 用瀏覽器列印即得 PDF）
+
+想從原始碼執行？`git clone https://github.com/a742987/Handover && cd Handover && npm install && npm run dev -- gen <username> --repo owner/name`。
 
 ### 指令
 
 | 指令 | 作用 |
 |---|---|
 | `gen <username> -r owner/name` | 蒐集 → 分析 → 產出完整手冊 |
-| `collect <username> -r owner/name` | 僅索引 GitHub 歷史（索引中已有的 commit、PR、review 與 issue 會被略過） |
-| `risk <username>` | 從本機索引列印風險 Top 5 |
+| `gen <username> -d ~/clone/dir` | 同樣流程，但改為讀取**本機 git clone** —— 無需 token、無需連網，GitLab/Gitee 也適用 |
+| `collect <username> -r owner/name [-d dir]` | 僅索引歷史（索引中已有的 commit、PR、review 與 issue 會被略過） |
+| `capture <username>` | 與離職工程師本人對談，錄下他的第一人稱回答並裝訂進第 6 章（`--answers q.json` 供 agent/腳本非互動使用） |
+| `risk <username> [--json]` | 從本機索引列印風險 Top 5 |
+| `bus-factor <username>` | 團隊視角：哪些模組只有一個人在提交，並在儲存庫有 CODEOWNERS 時將其合併 |
+| `gate <username> --files changed.txt` | CI 檢查：這組變更是否觸及僅由單人持有的模組？（`--comment`、`--fail-on-match`、`--repo owner/name` 用於限定多儲存庫索引；範例見 [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)） |
+| `verify <username>` | 引用存在性檢查：手冊中引用的每一條證據 ref 都必須存在於索引中（有缺失時結束代碼為 1 —— 可用於 CI，`--json` 供機器讀取） |
 | `render <username>` | 從索引重新產出手冊，不連上 GitHub（第 4-6 章僅在設定了 API 金鑰時才呼叫 LLM 提供方；可用 `-r` 覆寫索引中記錄的儲存庫） |
 
-常用參數：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`、`--data-dir <dir>`、`--refresh`（重新抓取已索引的內容）。
+常用參數：`--provider openai|anthropic|ollama`、`--model <model>`、`--since <ISO date>`（省略時區的時刻按 UTC 處理）、`--data-dir <dir>`、`--refresh`（重新抓取已索引的內容）、`--html`（可直接列印的 HTML 雙胞胎）、`--redact`（在送入 LLM 摘要與成書前清除已知格式的機密；也可用 `HANDOVER_REDACT=1`）、`--no-llm`（即使設定了金鑰也跳過 LLM 合成 —— 僅輸出確定性章節，任何內容都不離開本機；也可用 `HANDOVER_NO_LLM=1`）。`gen` 與 `collect` 還接受 `--author <identity>`，用於在本機 git clone 中比對離職者的姓名/電子郵件；`capture --list` 列出已錄製的回答；`bus-factor` 支援 `--top <n>`、`--window <days>` 與 `--json`（供 CI 使用）。
 
 ### LLM 提供方
 
@@ -82,16 +92,16 @@ risk = sole_contribution_ratio
 ```
 ┌──────────────┐   ┌───────────────┐   ┌──────────────┐   ┌───────────────┐
 │  Collect     │ → │  Distill      │ → │  Risk Engine │ → │  Render       │
-│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown book│
-│  (Octokit)   │   │  topic clusters│  │  change freq │   │  (PDF/HTML:   │
-│              │   │  Q&A extraction│  │  incidents   │   │   on roadmap) │
+│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown +   │
+│  (Octokit)   │   │  topic clusters│  │  change freq │   │  print-ready  │
+│  Local git   │   │  Q&A capture  │  │  incidents   │   │  HTML book    │
 └──────────────┘   └───────────────┘   └──────────────┘   └───────────────┘
           └────────── SQLite index (one file per person, cacheable) ─────────┘
 ```
 
 ## 編輯器外掛
 
-同一個 CLI 驅動三套整合。共通層是一個**內建 MCP 伺服器**（`handover-mcp`，隨 npm 套件一併發布），它把 `handover_generate`、`handover_collect`、`handover_risk` 與 `handover_render` 公開為工具 —— 任何 MCP 用戶端都可以直接使用，無需呼叫 CLI。
+同一個 CLI 驅動三套整合。共通層是一個**內建 MCP 伺服器**（`handover-mcp`，隨 npm 套件一併發布），它把 `handover_generate`、`handover_collect`、`handover_risk`、`handover_capture`、`handover_search`（唯讀證據檢索，用於回答追問）與 `handover_render` 公開為工具 —— 任何 MCP 用戶端都可以直接使用，無需呼叫 CLI。
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -119,7 +129,7 @@ npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
    ```
 2. 把 [`codex/handover.md`](codex/handover.md) 複製到 `~/.codex/prompts/handover.md`，然後執行 `/handover <username> --repo owner/name`。
 
-**其他任何 MCP 用戶端**（Cursor、ZCode 等）—— 把 `handover-mcp` 註冊為 stdio 伺服器即可；到處都是同樣的四個工具。
+**其他任何 MCP 用戶端**（Cursor、ZCode 等）—— 把 `handover-mcp` 註冊為 stdio 伺服器即可；到處都是同樣的六個工具。
 
 ## 隱私與倫理 —— 在為別人執行之前請先讀這一節
 
@@ -144,9 +154,16 @@ npm run dev -- ...  # run the CLI from source
 
 - [x] 儲存庫腳手架：CLI + Octokit 蒐集 + SQLite 索引 + 風險引擎 + Markdown 手冊
 - [x] MCP 伺服器（`handover-mcp`）+ Claude Code 外掛 + Codex prompt
-- [ ] 在一個真實的公開儲存庫上端到端跑通 `npx handover-book gen`（MVP，第 1–3 週）
-- [ ] PDF / HTML 輸出與翻頁展示
-- [ ] 30 天上手路徑 + 寫給未來的信，加入 LLM 風格遷移潤飾（v0.2）
+- [x] 本機 git clone 蒐集（`--git-dir`）—— 無需 token、無需連網
+- [x] `handover capture` —— 第一人稱問答裝訂進第 6 章（CLI + MCP）
+- [x] `handover bus-factor` —— 團隊視角，合併 CODEOWNERS
+- [x] 可直接列印的單一檔案 HTML 雙胞胎（`--html`；瀏覽器列印即得 PDF）
+- [x] CI 整合 —— `risk --json`、`gate` 指令 + 範例工作流程
+- [x] `handover_search` MCP 工具 + `--redact` 機密清除
+- [x] 行動摘要首頁（含資料涵蓋說明）、`handover verify` 引用檢查、明確的 `--no-llm` 關閉開關
+- [x] 收錄於儲存庫的範例手冊與核驗記錄（`examples/sample-report/`）
+- [x] 從已發布的 npm 套件在乾淨環境端到端跑通：安裝 → `gen`（本機 Git，`--no-llm`）→ `verify`（[驗證記錄](docs/install-verification.md)）
+- [ ] 以 GitHub token 在公開儲存庫上端到端跑通蒐集路徑（`-r owner/name`），並在乾淨環境中涵蓋一個 Unix 環境
 - [ ] 具證據深層連結的本機 web 閱讀器（v0.2）
 - [ ] 組織級能力風險地圖（v1.0）
 

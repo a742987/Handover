@@ -11,7 +11,7 @@ import { applyAnswers, parseAnswersJson, runInteractiveCapture } from './capture
 import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
 import { verifyCitations } from './verify.js';
 import { GitHubCollector, countCollected } from './collect/github.js';
-import { GitDirectoryCollector } from './collect/git.js';
+import { GitDirectoryCollector, previewLocalRepoKeys, recordedLocalRepoKeys } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
 import { computeBusFactor } from './risk/busfactor.js';
 import { matchTouchedModules, renderGateComment } from './risk/gate.js';
@@ -71,7 +71,7 @@ program
     refresh?: boolean;
     redact?: boolean;
     html?: boolean;
-    noLlm?: boolean;
+    llm?: boolean;
   }) => {
     try {
       const result = await generateHandoverBook({
@@ -86,7 +86,8 @@ program
         refresh: options.refresh,
         redact: options.redact,
         html: options.html,
-        noLlm: options.noLlm,
+        // commander stores `--no-llm` under the positive name as `llm: false`
+        noLlm: options.llm === false,
         onProgress: (message) => console.log(message),
       });
       printRiskTable(result.risks);
@@ -128,10 +129,21 @@ program
       let found = 0;
       try {
         if (options.repo.length > 0) {
+          // Local repo keys — both the ones passed to this run and every local
+          // clone already recorded in this index — so the GitHub collector's
+          // orphan cleanup spares locally-collected history (a later -r-only
+          // run must not wipe it).
+          const preserveRepos = [
+            ...new Set([
+              ...(options.gitDir?.length ? await previewLocalRepoKeys(store, options.gitDir) : []),
+              ...recordedLocalRepoKeys(store),
+            ]),
+          ];
           const collector = new GitHubCollector(config.githubToken);
           const collected = await collector.collectInto(store, username, options.repo, {
             since: options.since,
             refresh: options.refresh,
+            preserveRepos,
             onProgress: (message) => console.log(message),
           });
           console.log(
@@ -215,7 +227,9 @@ program
           return;
         }
         if (options.answers) {
-          const raw = await readFile(options.answers, 'utf8');
+          const raw = await readFile(options.answers, 'utf8').catch(() => {
+            throw new Error(`--answers file not found: ${options.answers} — pass the path to a JSON file of {"question","answer"} objects.`);
+          });
           const stored = applyAnswers(store, parseAnswersJson(raw));
           console.log(`Captured ${stored} answer(s). Re-render the book with "handover render ${username}".`);
           return;
@@ -273,11 +287,12 @@ program
         return;
       }
       console.log('\nBus factor map (most exposed first):');
+      const windowDays = Math.round(options.window ?? 90);
       for (const item of items) {
         const flag = item.status === 'critical' ? 'ONE PERSON' : item.status === 'fragile' ? 'thin cover' : 'shared';
         const owners = item.owners.length > 0 ? `  owners ${item.owners.join(' ')}` : '';
         console.log(
-          `  ${item.module.padEnd(44)} ${String(item.distinctAuthors).padStart(2)} author(s), top ${item.topAuthor} ${Math.round(item.topAuthorShare * 100)}%  [${flag}]${item.recent ? '' : '  quiet 90d'}${owners}`,
+          `  ${item.module.padEnd(44)} ${String(item.distinctAuthors).padStart(2)} author(s), top ${item.topAuthor} ${Math.round(item.topAuthorShare * 100)}%  [${flag}]${item.recent ? '' : `  quiet ${windowDays}d`}${owners}`,
         );
       }
     } catch (error) {
@@ -298,6 +313,9 @@ program
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
+      if (options.files === '-' && process.stdin.isTTY) {
+        throw new Error('--files - reads the changed paths from stdin — pipe them in, e.g. `git diff --name-only main | handover gate ' + username + ' --files -`.');
+      }
       const raw = options.files === '-' ? readFileSync(0, 'utf8') : await readFile(options.files, 'utf8');
       const changed = raw.split('\n').map((line) => line.trim()).filter(Boolean);
       const store = new HandoverStore(path.join(config.dataDir, `${username}.db`));
@@ -339,7 +357,7 @@ program
   .option('--redact', 'scrub known secret formats from the LLM digest and the rendered book (or HANDOVER_REDACT=1)')
   .option('--html', 'also write a print-ready single-file HTML twin of the book')
   .option('--no-llm', 'skip LLM synthesis even when an API key is configured — chapters 4-6 use deterministic fallbacks (or HANDOVER_NO_LLM=1)')
-  .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir?: string; redact?: boolean; html?: boolean; noLlm?: boolean }) => {
+  .action(async (username: string, options: { repo: string[]; provider?: string; model?: string; dataDir?: string; redact?: boolean; html?: boolean; llm?: boolean }) => {
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
@@ -351,7 +369,8 @@ program
         model: options.model,
         redact: options.redact,
         html: options.html,
-        noLlm: options.noLlm,
+        // commander stores `--no-llm` under the positive name as `llm: false`
+        noLlm: options.llm === false,
         onProgress: (message) => console.log(message),
       });
       console.log(`\nBook:  ${result.bookPath}`);

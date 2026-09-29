@@ -5,11 +5,11 @@ import type { HandoverBook, RiskItem } from './types.js';
 import { loadConfig, type HandoverConfig, type LlmProviderName } from './config.js';
 import { HandoverStore } from './store/sqlite.js';
 import { GitHubCollector, countCollected } from './collect/github.js';
-import { GitDirectoryCollector, previewLocalRepoKeys } from './collect/git.js';
+import { GitDirectoryCollector, previewLocalRepoKeys, recordedLocalRepoKeys } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
 import { synthesizeChapters } from './distill/synthesize.js';
 import { createProvider, type LlmProvider } from './distill/llm.js';
-import { buildActions, buildCoverage, markCollectionSource } from './report/summary.js';
+import { buildActions, buildCoverage } from './report/summary.js';
 import { renderBook } from './render/markdown.js';
 import { renderBookHtml } from './render/html.js';
 import { redact } from './render/redact.js';
@@ -140,13 +140,16 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
     let collectedTotal = 0;
     const scope = [...repos];
 
-    // Local repo keys up front: the GitHub collector's orphan cleanup must
-    // know about them, or a combined -r/-d run (or any later -r-only run)
-    // wipes the locally-collected history with no warning.
-    let preserveRepos: string[] = [];
-    if (gitDirs.length > 0) {
-      preserveRepos = await previewLocalRepoKeys(store, gitDirs);
-    }
+    // Local repo keys up front — the ones passed to this run and every local
+    // clone already recorded in this index — so the GitHub collector's orphan
+    // cleanup never wipes locally-collected history (a later -r-only run
+    // cannot re-collect it from GitHub).
+    const preserveRepos = [
+      ...new Set([
+        ...(gitDirs.length > 0 ? await previewLocalRepoKeys(store, gitDirs) : []),
+        ...recordedLocalRepoKeys(store),
+      ]),
+    ];
 
     if (repos.length > 0) {
       onProgress(`Collecting GitHub history for @${options.username} …`);
@@ -162,7 +165,6 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
       );
       display = collected.login || display;
       collectedTotal += countCollected(collected);
-      markCollectionSource(store, 'github');
     }
 
     if (gitDirs.length > 0) {
@@ -178,7 +180,6 @@ export async function generateHandoverBook(options: GenerateOptions): Promise<Ge
       );
       collectedTotal += local.indexedCommits + local.skippedCommits;
       scope.push(...local.repos);
-      markCollectionSource(store, 'local-git');
     }
 
     if (collectedTotal === 0) {

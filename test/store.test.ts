@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { HandoverStore } from '../src/store/sqlite.js';
 import type { CommitRecord, IssueRecord, PullRequestRecord, ReviewRecord } from '../src/types.js';
 
@@ -165,6 +169,24 @@ describe('HandoverStore', () => {
     expect(store.hasPullRequest(REPO, 1, '2026-09-01T00:00:00Z', 'aaaa')).toBe(true);
   });
 
+  it('treats a stored NULL head sha as stale so pre-head_sha rows refresh once', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertPullRequest({
+      repo: REPO, number: 1, title: 'legacy', authorLogin: 'alice', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', mergedAt: null, body: '', additions: 0, deletions: 0, changedFiles: 0,
+      updatedAt: '2026-09-02T00:00:00Z',
+    });
+    // updated_at matches, but NULL head_sha cannot prove the branch did not move
+    expect(store.hasPullRequest(REPO, 1, '2026-09-02T00:00:00Z', 'aaaa')).toBe(false);
+    // and after a refetch filled the column, the skip works again
+    store.upsertPullRequest({
+      repo: REPO, number: 1, title: 'legacy', authorLogin: 'alice', state: 'open',
+      createdAt: '2026-09-01T00:00:00Z', mergedAt: null, body: '', additions: 0, deletions: 0, changedFiles: 0,
+      updatedAt: '2026-09-02T00:00:00Z', headSha: 'aaaa',
+    });
+    expect(store.hasPullRequest(REPO, 1, '2026-09-02T00:00:00Z', 'aaaa')).toBe(true);
+  });
+
   it('clears every table for repos outside the given scope, keeping the rest', () => {
     const store = HandoverStore.inMemory();
     const other = 'other/repo';
@@ -270,6 +292,54 @@ describe('ghost-data pruning', () => {
     expect(store.allPrFiles().get(`${REPO}#1`)).toBeUndefined();
     expect(store.allReviews()).toHaveLength(0);
     expect(store.allIssues().map((issue) => issue.number)).toEqual([2]);
+  });
+
+  it('deletes the conversation comments and labels of pruned PRs, not just the issue row', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'handover-store-'));
+    const dbPath = path.join(dir, 'test.db');
+    const store = new HandoverStore(dbPath);
+    try {
+      store.upsertPullRequestBundle({
+        pr: pr(1),
+        paths: ['a.ts'],
+        reviews: [],
+        seenReviewIds: [],
+        issue: {
+          ...mirroredIssue(1),
+          labels: ['bug'],
+          comments: [{ id: 900, number: 1, authorLogin: 'bob', createdAt: '2026-09-01T00:00:00Z', body: 'conversation' }],
+        },
+      });
+      store.upsertPullRequestBundle({ pr: pr(2), paths: ['b.ts'], reviews: [], seenReviewIds: [], issue: mirroredIssue(2) });
+      store.prunePullRequestsNotSeen(REPO, [2]);
+    } finally {
+      store.close();
+    }
+    // the ghost rows live in the raw tables — allIssues() can no longer see
+    // them once the parent issue row is gone, so check the database directly
+    const raw = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      expect(raw.prepare('SELECT COUNT(*) AS n FROM issue_comments').get()).toEqual({ n: 0 });
+      expect(raw.prepare('SELECT COUNT(*) AS n FROM issue_labels').get()).toEqual({ n: 0 });
+    } finally {
+      raw.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prunes against listings larger than the SQL variable cap', () => {
+    const store = HandoverStore.inMemory();
+    const keep = 'a'.repeat(40);
+    const drop = 'b'.repeat(40);
+    store.upsertCommit(commit(keep, 'alice', '2026-09-01T00:00:00Z', ['src/a.ts']));
+    store.upsertCommit(commit(drop, 'alice', '2026-09-02T00:00:00Z', ['src/b.ts']));
+    // 40,000 shas exceed SQLite's default bound-variable limit (32,766)
+    const seen: string[] = [keep];
+    for (let i = 0; i < 39_999; i += 1) {
+      seen.push(i.toString(16).padStart(40, '0'));
+    }
+    expect(() => store.pruneCommitsNotSeen(REPO, seen)).not.toThrow();
+    expect(store.allCommits().map((entry) => entry.sha)).toEqual([keep]);
   });
 
   it('removes deleted issues and keeps mirrored PR rows', () => {

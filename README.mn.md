@@ -26,35 +26,45 @@ Handover нь өөр юу ч хамгаалахгүй байгаа далд хо
 3. **эрсдэлийн Топ-5** — «тэд явахад юу эвдрэх вэ» гэдгийг эрэмбэлж оноолж, мөр бүрийг нотолгооны гинжин хэлхээтэйгээр
 4. **Шийдвэрийн археологи** — «бид тэр үед юунд ийм сонголт хийсэн бэ» гэдгийг бодит PR/issue маргааныг эш татан харуулж
 5. **30 хоногийн зам** — залгамжлагчийн сургах төлөвлөгөө
-6. **Ирээдүйд өгөх захидал** — залгамжлагч асуух асуултуудыг гарахуйц хүн өөрөөрөө хариулсан нь
+6. **Асуулт ба хариултын ноорог (Questions & Draft Answers)** — сүүлчийн өдрөөс өмнө юу асуух вэ, мөн гарах инженерийн өөрөө бүртгэсэн хариултууд
 
 ## Хурдан эхлэх
 
-Шаардлага: **Node ≥ 22.13** (SQLite-г өөрөө агуулж ирдэг — native хөрвүүлэлт шаардлагагүй), ухаалаг хурдны хязгаартай ажиллахын тулд GitHub token.
+Хамгийн богино зам — нэг командаар, clone хийхгүйгээр (Node ≥ 22.13 шаардлагатай):
 
 ```bash
-git clone https://github.com/a742987/Handover.git && cd Handover
-npm install
+npm install -g handover-book
 
-export GITHUB_TOKEN=ghp_...          # repo scope for private repos
-npm run dev -- gen <username> --repo owner/name
+# GitHub-ээс цуглуулах (ухаалаг хурдны хязгаартай ажиллахын тулд token хэрэгтэй):
+export GITHUB_TOKEN=ghp_...
+handover gen <username> --repo owner/name --html
+
+# Эсвэл token ч сүлжээ ч хэрэггүй — хүний локал git clone-уудыг шууд унших:
+handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 ```
 
 Үр дүн нь `handover-data/` хавтаст унадаг:
 
 - `handover-data/<username>.db` — локал SQLite индекс (хүн бүрд нэг файл; дараагийн ажиллагаанууд нь шинжлэн нэмэх хэлбэртэй, бараг шууд ажиллана)
-- `handover-data/handover-book-<username>.md` — бүрсэн ном
+- `handover-data/handover-book-<username>.md` — бүрсэн ном (`--html` цуг өгвөл хэвлэхэд бэлэн нэг файлт HTML ихэр хувилбар хамт гарна; хөтөч дээрээс хэвлэвэл PDF болно)
+
+Эх кодоос ажиллуулахыг илүүд үзэж байна уу? `git clone https://github.com/a742987/Handover && cd Handover && npm install && npm run dev -- gen <username> --repo owner/name`.
 
 ### Командууд
 
 | Команд | Юу хийдэг вэ |
 |---|---|
 | `gen <username> -r owner/name` | цуглуулах → шинжлэх → бүх номыг үүсгэх |
-| `collect <username> -r owner/name` | зөвхөн GitHub түүхийг индексжүүлэх (индексэд аль хэдийн байгаа commit, PR, review, issue-г алгасна) |
-| `risk <username>` | локал индексээс эрсдэлийн Топ-5-ыг хэвлэх |
+| `gen <username> -d ~/clone/dir` | ижил процесс, гэхдээ **локал git clone**-оос — token, сүлжээ шаардлагагүй, GitLab/Gitee дээр ч ажиллана |
+| `collect <username> -r owner/name [-d dir]` | зөвхөн түүхийг индексжүүлэх (индексэд аль хэдийн байгаа commit, PR, review, issue-г алгасна) |
+| `capture <username>` | гарах инженертэй хамт сууж, түүний өөрийн хариултуудыг бүртгэх; бүртгэсэн хариултууд 6-р бүлэгт хавсаргагдана (`--answers q.json` — agent, скриптэд зориулсан) |
+| `risk <username> [--json]` | локал индексээс эрсдэлийн Топ-5-ыг хэвлэх |
+| `bus-factor <username>` | багийн харц: аль модулийг ганц хүн л commit хийж байгааг харуулна; repository-д CODEOWNERS байвал түүнтэй нэгтгэнэ |
+| `gate <username> --files changed.txt` | CI шалгалт: энэ өөрчлөлтийн багц цорын ганц хүн л commit хийдэг модулиудад хүрэх үү? (`--comment`, `--fail-on-match`, `--repo owner/name` — олон repository-тэй индексийг хязгаарлахад; жишээ нь [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
+| `verify <username>` | ишлэлийн байгаа эсэхийн шалгалт: бүрсэн номд дурдагдсан ref бүр индексэд байх ёстой (ref дутуу байвал exit 1 — CI-д ээлтэй, `--json` нь машинд зориулсан) |
 | `render <username>` | индексээс номыг дахин үүсгэх, GitHub-д хандахгүй (4-6-р бүлгүүд зөвхөн API түлхүүр тохируулсан үед LLM provider рүү хандана; индекст бүртгэсэн repository-г `-r`-ээр дарж бичиж болно) |
 
-Түгээмэл флагууд: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (индексжүүлсэн зүйлийг дахин татах).
+Түгээмэл флагууд: `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>` (цагийн бүс дурдагдаагүй бол UTC гэж үзнэ), `--data-dir <dir>`, `--refresh` (индексжүүлсэн зүйлийг дахин татах), `--html` (хэвлэхэд бэлэн HTML ихэр хувилбар), `--redact` (LLM-ий хураангуй болон бүрсэн номд орохоос өмнө танил нууц форматуудыг цэвэрлэнэ; мөн `HANDOVER_REDACT=1`), `--no-llm` (түлхүүр тохируулсан ч байсан LLM синтезийг алгасана — зөвхөн тодорхойлогдох бүлгүүд л гарна, ямар ч зүйл машинаас гарахгүй; мөн `HANDOVER_NO_LLM=1`). `gen`, `collect` нь локал clone дотор гарах инженерийн нэр/имэйлийг тааруулах `--author <identity>`-г хүлээн авна; `capture --list` нь бүртгэсэн хариултуудыг хэвлэнэ; `bus-factor` нь CI-д зориулсан `--top <n>`, `--window <days>`, `--json`-г дэмждэг.
 
 ### LLM provider-ууд
 
@@ -82,16 +92,16 @@ risk = sole_contribution_ratio
 ```
 ┌──────────────┐   ┌───────────────┐   ┌──────────────┐   ┌───────────────┐
 │  Collect     │ → │  Distill      │ → │  Risk Engine │ → │  Render       │
-│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown book│
-│  (Octokit)   │   │  topic clusters│  │  change freq │   │  (PDF/HTML:   │
-│              │   │  Q&A extraction│  │  incidents   │   │   on roadmap) │
+│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown +   │
+│  (Octokit)   │   │  topic clusters│  │  change freq │   │  print-ready  │
+│  Local git   │   │  Q&A capture  │  │  incidents   │   │  HTML book    │
 └──────────────┘   └───────────────┘   └──────────────┘   └───────────────┘
           └────────── SQLite index (one file per person, cacheable) ─────────┘
 ```
 
 ## Editor plugin-ууд
 
-Нэг ижил CLI нь гурван интеграцийг ажиллуулдаг. Нийтлэг давхарга нь **суурин MCP сервер** (`handover-mcp`, npm багцад хамт ирдэг) бөгөөд энэ нь `handover_generate`, `handover_collect`, `handover_risk`, `handover_render` гэсэн дөрвөн tool-г илгадаг — ямар ч MCP client CLI рүү нээлттэй shell дуудахгүйгээр шууд ашиглаж болно.
+Нэг ижил CLI нь гурван интеграцийг ажиллуулдаг. Нийтлэг давхарга нь **суурин MCP сервер** (`handover-mcp`, npm багцад хамт ирдэг) бөгөөд энэ нь `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (дагаж асуух асуултад зориулсан, зөвхөн унших нотолгооны хайлт) болон `handover_render` гэсэн зургаан tool-г илгадаг — ямар ч MCP client CLI рүү нээлттэй shell дуудахгүйгээр шууд ашиглаж болно.
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -119,7 +129,7 @@ Plugin нь `handover` MCP серверийг автоматаар бүртгэ�
    ```
 2. [`codex/handover.md`](codex/handover.md)-г `~/.codex/prompts/handover.md` руу хуулаад, `/handover <username> --repo owner/name` командыг ажиллуулна.
 
-**Бусад ямар ч MCP client** (Cursor, ZCode, …) — `handover-mcp`-г stdio сервер болгон бүртгээрэй; дөрвөн tool бүгд газар дамжин ижил.
+**Бусад ямар ч MCP client** (Cursor, ZCode, …) — `handover-mcp`-г stdio сервер болгон бүртгээрэй; зургаан tool бүгд газар дамжин ижил.
 
 ## Нууцлал ба ёс зүй — хэн нэгний төлөө ажиллуулахаасаа өмнө үүнийг унш
 
@@ -144,9 +154,16 @@ npm run dev -- ...  # run the CLI from source
 
 - [x] Repository-ийн суурь бүтэц: CLI + Octokit цуглуулга + SQLite индекс + эрсдэлийн engine + Markdown ном
 - [x] MCP сервер (`handover-mcp`) + Claude Code plugin + Codex prompt
-- [ ] Жинхэнэ нийтийн repository дээр `npx handover-book gen` бүрэн гүйцэд ажиллах (MVP, 1–3-р долоо хоног)
-- [ ] PDF / HTML гаралт, хуудас эргүүлэх демо
-- [ ] 30 хоногийн зам + Ирээдүйд өгөх захидал — LLM хэлбэржүүлэлтийн нарийн болгохоор (v0.2)
+- [x] Локал git clone цуглуулга (`--git-dir`) — token, сүлжээгүй
+- [x] `handover capture` — өөрийн дуугаар өгсөн Q&A-г 6-р бүлэгт хавсаргах (CLI + MCP)
+- [x] `handover bus-factor` — CODEOWNERS-тэй нэгтгэсэн багийн харц
+- [x] Хэвлэхэд бэлэн нэг файлт HTML ихэр хувилбар (`--html`; хөтөчөөс хэвлэвэл PDF)
+- [x] CI интеграци — `risk --json`, `gate` команд + жишээ workflow
+- [x] `handover_search` MCP tool + `--redact` нууц цэвэрлэгээ
+- [x] Өгөгдлийн хамрах хүрээг харуулсан action-summary эхний хуудас, `handover verify` ишлэлийн шалгалт, тодорхой `--no-llm` унтраах шилжүүлэг
+- [x] Репозиторт хадгалагдсан жишээ ном, баталгаажуулалтын тэмдэглэл (`examples/sample-report/`)
+- [x] Нийтлэгдсэн npm багцаас цэвэр орчинд бүрэн гүйцэд ажиллуулах: суулгах → `gen` (локал Git, `--no-llm`) → `verify` ([баталгаажуулалтын тэмдэглэл](docs/install-verification.md))
+- [ ] GitHub token-тэй цуглуулга (`-r owner/name`) нийтийн repository дээр бүрэн гүйцэд ажиллах, мөн цэвэр ажиллагаанд нэг Unix орчин
 - [ ] Нотолгооны гүн холбоос бүхий локал вэб уншигч (v0.2)
 - [ ] Байгууллагаар дамжсан чадварын эрсдэлийн зураглал (v1.0)
 

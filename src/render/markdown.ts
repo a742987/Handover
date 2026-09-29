@@ -1,10 +1,12 @@
 import type { ActionItem, BookCoverage, EvidenceRef, HandoverBook } from '../types.js';
 import { CHAPTER_TITLES } from '../distill/synthesize.js';
-import { escapeHtmlText, escapeMarkdown, tableCell } from './escape.js';
+import { codeSpan, escapeHeading, escapeHtmlText, escapeMarkdown, tableCell } from './escape.js';
 import { evidenceLink, formatRef } from './refs.js';
 
 function evidenceKey(ref: EvidenceRef): string {
-  return `${ref.kind}:${ref.ref}`;
+  // refs collide across repositories (#12 exists in every repo), so the repo
+  // qualifier the risk engine attaches is part of the identity
+  return `${ref.kind}:${ref.repo ?? ''}:${ref.ref}`;
 }
 
 function evidenceList(refs: EvidenceRef[], multiRepo: boolean): string {
@@ -42,7 +44,7 @@ function renderCoverage(book: HandoverBook, coverage: BookCoverage): string[] {
 }
 
 function renderActionItem(index: number, item: ActionItem, multiRepo: boolean): string[] {
-  const lines: string[] = [`**${index + 1}. \`${escapeHtmlText(item.module)}\`**`, ''];
+  const lines: string[] = [`**${index + 1}. ${codeSpan(item.module)}**`, ''];
   lines.push(`- **Finding:** ${escapeHtmlText(item.finding)}`);
   lines.push(`- **Confirm with ${escapeHtmlText(item.confirmWith)}:** ${escapeHtmlText(item.question)}`);
   if (item.evidence.length > 0) {
@@ -117,7 +119,7 @@ export function renderBook(book: HandoverBook): string {
   lines.push('');
 
   for (const chapter of book.chapters) {
-    lines.push(`## ${chapter.id}. ${escapeMarkdown(chapter.title)}`, '');
+    lines.push(`## ${chapter.id}. ${escapeHeading(chapter.title)}`, '');
     lines.push(chapter.content.trim(), '');
   }
 

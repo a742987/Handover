@@ -39,6 +39,15 @@ export function firstLine(text: string, max = 120): string {
 }
 
 /**
+ * CI bot logins (dependabot[bot], renovate[bot], github-actions[bot], …) are
+ * not teammates: counted as authors they deflate sole-contribution ratios and
+ * inflate the "who else can take over" headcount.
+ */
+export function isBotLogin(login: string): boolean {
+  return /\[bot\]$/i.test(login);
+}
+
+/**
  * Explainable risk scoring (project plan §3.4):
  *
  *   risk = sole_contribution_ratio × change_frequency × incident_weight × irreplaceability
@@ -105,7 +114,8 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
     const isUser = commit.authorLogin !== 'unknown' && sameLogin(commit.authorLogin, username);
     // Exclude 'unknown' authors from total: they are unattributed commits (e.g. email
     // patches, migrations) and would otherwise dilute sole-contribution ratios.
-    const isKnownAuthor = commit.authorLogin !== 'unknown';
+    // Bot logins are excluded for the same reason from the people-side math.
+    const isKnownAuthor = commit.authorLogin !== 'unknown' && !isBotLogin(commit.authorLogin);
     // a commit touching several files of one module counts once, not per file
     const countedModules = new Set<string>();
     for (const file of commit.files) {
@@ -158,11 +168,12 @@ export function computeRisk(store: HandoverStore, username: string, options: Ris
   }
 
   // Normalization base: prefer recent activity; fall back to lifetime activity
-  // when nothing happened inside the window (quiet repo).
+  // when nothing happened inside the window (quiet repo). reduce, not
+  // Math.max(...spread) — a huge monorepo index overflows the argument limit.
   const modulesList = [...modules.values()].filter((module) => module.byUser > 0);
-  const maxRecent = Math.max(0, ...modulesList.map((module) => module.recent));
+  const maxRecent = modulesList.reduce((max, module) => Math.max(max, module.recent), 0);
   const useLifetime = maxRecent === 0;
-  const maxLifetime = Math.max(0, ...modulesList.map((module) => module.total));
+  const maxLifetime = modulesList.reduce((max, module) => Math.max(max, module.total), 0);
   const normalizeBase = useLifetime ? maxLifetime : maxRecent;
 
   const items: RiskItem[] = modulesList.map((module) => {

@@ -21,10 +21,21 @@ export function parseRepos(value: string, previous: string[]): string[] {
  * the machine's UTC offset.
  */
 export function parseSince(value: string): string {
-  const isoRe = /^(\d{4}-\d{2}-\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
+  const isoRe = /^(\d{4}-\d{2}-\d{2})(T(\d{2}):(\d{2})(:(\d{2})(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/;
   const match = isoRe.exec(value);
   if (!match) {
     throw new InvalidArgumentError('--since expects an ISO date, e.g. 2024-01-01 or 2024-01-01T10:00:00Z');
+  }
+  // Date.parse rolls impossible dates over (2024-02-30 → Mar 1, T24:00 → next
+  // day) instead of rejecting them; check the calendar fields directly.
+  const [, datePart, , hh, mm, , ss] = match;
+  const [year, month, day] = datePart!.split('-').map(Number);
+  const asUtc = new Date(Date.UTC(year!, month! - 1, day!));
+  if (asUtc.getUTCFullYear() !== year || asUtc.getUTCMonth() !== month! - 1 || asUtc.getUTCDate() !== day!) {
+    throw new InvalidArgumentError(`--since "${value}" is not a real calendar date`);
+  }
+  if (Number(hh) > 23 || Number(mm) > 59 || Number(ss ?? 0) > 59) {
+    throw new InvalidArgumentError(`--since "${value}" is not a real calendar date`);
   }
   const zoneless = match[2] !== undefined && !/(Z|[+-]\d{2}:?\d{2})$/.test(value);
   const date = new Date(zoneless ? `${value}Z` : value);

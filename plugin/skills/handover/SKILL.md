@@ -1,11 +1,11 @@
 ---
 name: handover
-description: Generate or work with a Handover Book — an evidence-linked offboarding document built from a departing engineer's GitHub history (commits, PRs, reviews, issues). Use when the user wants to prepare a handover/offboarding document, assess "what breaks when this person leaves", find modules where someone is the sole author or sole reviewer, or reconstruct why a design decision was made.
+description: Generate or work with a Handover Book — an evidence-linked offboarding document built from a departing engineer's history (commits, PRs, reviews, issues from GitHub, or commits from local git clones). Use when the user wants to prepare a handover/offboarding document, assess "what breaks when this person leaves", find modules where someone is the sole author or sole reviewer, or reconstruct why a design decision was made.
 ---
 
 # Handover
 
-Point Handover at a departing engineer's GitHub username and it produces a bound, evidence-linked Handover Book. Collection and rendering run locally; only GitHub is read, and when an LLM provider is configured, collected content is sent to it for synthesis.
+Point Handover at a departing engineer's GitHub username and it produces a bound, evidence-linked Handover Book. Collection and rendering run locally; GitHub (or the local git clones the user points at) is read, and when an LLM provider is configured, collected content is sent to it for synthesis — use `--no-llm` / `noLlm` when the user needs everything to stay on this machine.
 
 ## The book's six chapters
 
@@ -14,7 +14,7 @@ Point Handover at a departing engineer's GitHub username and it produces a bound
 3. **Risk Top 5** — "what breaks when they leave", scored and ranked (deterministic)
 4. **Decision Archaeology** — "why we chose this back then", quoting the actual PR/issue debates (LLM)
 5. **The 30-Day Path** — the successor's learning plan (LLM)
-6. **Letter to the Future** — the successor's likely questions, answered in the departing dev's voice (LLM)
+6. **Questions & Draft Answers** — the successor's likely questions with evidence-based draft answers to confirm, plus the departing engineer's own recorded answers (LLM drafts + `handover capture`)
 
 Chapters 1–3 always work. Chapters 4–6 need an LLM (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or a local Ollama); without a key they fall back to deterministic summaries.
 
@@ -40,7 +40,7 @@ Key parameters:
 - `provider`/`model` — optional LLM override for chapters 4–6.
 - `redact` — scrub known secret formats from the LLM digest and the book; `html` — also emit a print-ready HTML twin.
 
-Environment: `GITHUB_TOKEN` must be set for anything that touches the network. Indexing is incremental — a second run for the same person only fetches what is new, so prefer re-running `handover_generate` over `--refresh`.
+Environment: `GITHUB_TOKEN` must be set for anything that touches the GitHub network; local clone collection (`gitDirs`) needs no token. Indexing is incremental — a second run for the same person only fetches what is new, so prefer re-running `handover_generate` over `--refresh`.
 
 ## Rules when presenting results
 

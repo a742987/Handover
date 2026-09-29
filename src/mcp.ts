@@ -2,9 +2,10 @@
 /**
  * MCP server for Handover.
  *
- * Exposes the CLI's four commands as tools so any MCP client (Claude Code,
- * Codex, Cursor, ZCode, …) can drive the pipeline without shelling out.
- * stdio transport; launch with `handover-mcp`.
+ * Exposes the pipeline as six tools — generate, collect, risk, capture,
+ * search, render — so any MCP client (Claude Code, Codex, Cursor, ZCode, …)
+ * can drive it without shelling out. stdio transport; launch with
+ * `handover-mcp`.
  */
 import { mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -16,12 +17,12 @@ import { loadConfig, type LlmProviderName } from './config.js';
 import { sameLogin } from './identity.js';
 import { parseSince } from './args.js';
 import { applyAnswers } from './capture.js';
-import { searchIndex } from './search.js';
 import { generateHandoverBook, renderHandoverBook } from './pipeline.js';
 import { GitHubCollector } from './collect/github.js';
-import { GitDirectoryCollector, previewLocalRepoKeys } from './collect/git.js';
+import { GitDirectoryCollector, previewLocalRepoKeys, recordedLocalRepoKeys } from './collect/git.js';
 import { computeRisk } from './risk/engine.js';
 import { redact as redactSecrets } from './render/redact.js';
+import { searchIndex, type SearchResultItem } from './search.js';
 import { HandoverStore } from './store/sqlite.js';
 import { requireIndex } from './store/index-check.js';
 import type { RiskItem } from './types.js';
@@ -100,6 +101,14 @@ function scrubRisks(risks: RiskItem[]): RiskItem[] {
     rationale: redactSecrets(risk.rationale),
     evidence: risk.evidence.map((ref) => (ref.excerpt ? { ...ref, excerpt: redactSecrets(ref.excerpt) } : ref)),
   }));
+}
+
+/** Same always-on scrubbing for search results: excerpts quote raw repo text. */
+function scrubSearch(payload: { count: number; results: SearchResultItem[] }): { count: number; results: SearchResultItem[] } {
+  return {
+    ...payload,
+    results: payload.results.map((item) => ({ ...item, excerpt: redactSecrets(item.excerpt) })),
+  };
 }
 
 const server = new McpServer({
@@ -211,12 +220,15 @@ server.registerTool(
       await mkdir(config.dataDir, { recursive: true });
       const store = new HandoverStore(path.join(config.dataDir, `${user}.db`));
       try {
-        // Local repo keys up front so the GitHub collector's orphan cleanup
-        // spares locally-collected history in the same index.
-        let preserve: string[] = [];
-        if (gitDirs?.length) {
-          preserve = await previewLocalRepoKeys(store, gitDirs);
-        }
+        // Local repo keys — this run's dirs plus every local clone already in
+        // the index — so the GitHub collector's orphan cleanup spares
+        // locally-collected history.
+        const preserve: string[] = [
+          ...new Set([
+            ...(gitDirs?.length ? await previewLocalRepoKeys(store, gitDirs) : []),
+            ...recordedLocalRepoKeys(store),
+          ]),
+        ];
         let collected = null;
         if (repos.length > 0) {
           const collector = new GitHubCollector(config.githubToken);
@@ -352,7 +364,7 @@ server.registerTool(
       await requireIndex(config.dataDir, user, 'run the handover_generate or handover_collect tool first.');
       const store = new HandoverStore(path.join(config.dataDir, `${user}.db`));
       try {
-        return textResult(searchIndex(store, { query, kind, author, since, repo, limit }), progress);
+        return textResult(scrubSearch(searchIndex(store, { query, kind, author, since, repo, limit })), progress);
       } finally {
         store.close();
       }

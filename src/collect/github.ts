@@ -1,5 +1,6 @@
 import { Octokit } from '@octokit/rest';
 import { codeownersMetaKey } from './codeowners.js';
+import { markCollectionSource } from '../report/summary.js';
 import type {
   CommentRecord,
   CommitRecord,
@@ -123,7 +124,15 @@ export class GitHubCollector {
 
   constructor(token: string, octokit?: Octokit) {
     this.octokitTokenWasProvided = token.trim().length > 0;
-    this.octokit = octokit ?? new Octokit({ auth: token || undefined, userAgent: 'handover-book' });
+    this.octokit =
+      octokit ??
+      new Octokit({
+        auth: token || undefined,
+        userAgent: 'handover-book',
+        // GitHub Enterprise Server: GITHUB_API_URL is the variable GitHub's own
+        // Actions runtime sets, so CI-picked-up config "just works" locally too.
+        ...(process.env.GITHUB_API_URL ? { baseUrl: process.env.GITHUB_API_URL } : {}),
+      });
     this.installRequestBackoff();
   }
 
@@ -200,8 +209,20 @@ export class GitHubCollector {
     // Clear orphan data from repos not in the current collection scope. Repos
     // collected from other sources (local git dirs, collected later in the same
     // run) must be part of that scope or their rows are wiped with no warning.
-    const scope = [...new Set(repos)];
-    store.clearRepositoriesExcept([...scope, ...(options.preserveRepos ?? [])]);
+    // Repo rows are keyed by the lowercased slug, so the scope must be
+    // normalized the same way — SQLite's NOT IN is case-sensitive, and a
+    // mixed-case `-r Acme/API` would otherwise wipe everything collected as
+    // `acme/api` and re-fetch it from scratch.
+    const scope = [
+      ...new Set(
+        repos.map((fullName) => {
+          const { owner, repo } = parseRepoSlug(fullName);
+          return `${owner}/${repo}`;
+        }),
+      ),
+    ];
+    const preserveRepos = options.preserveRepos ?? [];
+    store.clearRepositoriesExcept([...scope, ...preserveRepos]);
 
     for (const fullName of scope) {
       const { owner, repo } = parseRepoSlug(fullName);
@@ -210,7 +231,7 @@ export class GitHubCollector {
       await this.collectCommits(store, owner, repo, options, result);
       await this.collectPullRequests(store, owner, repo, options, result);
       await this.collectIssues(store, owner, repo, options, result);
-      const codeowners = await this.fetchCodeowners(owner, repo);
+      const codeowners = await this.fetchCodeowners(owner, repo, options.onProgress);
       if (codeowners !== null) {
         store.setMeta(codeownersMetaKey(name), codeowners);
       }
@@ -218,7 +239,11 @@ export class GitHubCollector {
 
     store.setMeta('last_collected_at', new Date().toISOString());
     store.setMeta('collected_for', login);
-    store.setMeta('repos', scope.join(','));
+    markCollectionSource(store, 'github');
+    // The orphan cleanup above wiped everything outside scope ∪ preserve, so
+    // the recorded repo list must match exactly that — keeping stale entries
+    // would leave the book citing repos with no data behind them.
+    store.setMeta('repos', [...new Set([...scope, ...preserveRepos])].join(','));
     return result;
   }
 
@@ -238,9 +263,11 @@ export class GitHubCollector {
   /**
    * Best-effort CODEOWNERS fetch (feeds the bus-factor view): the first of the
    * three documented locations wins; missing files, 404s and API stubs all
-   * just mean "no ownership metadata for this repo".
+   * just mean "no ownership metadata for this repo". A 403/429 is different —
+   * it means the API refused the request, and silently treating that as "no
+   * CODEOWNERS" would make ownership data vanish mid-run.
    */
-  private async fetchCodeowners(owner: string, repo: string): Promise<string | null> {
+  private async fetchCodeowners(owner: string, repo: string, onProgress?: (message: string) => void): Promise<string | null> {
     for (const candidate of ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS']) {
       try {
         const response = await this.octokit.rest.repos.getContent({ owner, repo, path: candidate });
@@ -248,7 +275,11 @@ export class GitHubCollector {
         if (typeof data.content === 'string' && (data.encoding ?? 'base64') === 'base64') {
           return Buffer.from(data.content, 'base64').toString('utf8');
         }
-      } catch {
+      } catch (error) {
+        const status = (error as { status?: number }).status;
+        if (status === 403 || status === 429) {
+          onProgress?.(`warning: CODEOWNERS check for ${owner}/${repo} failed (HTTP ${status}) — bus-factor ownership data may be missing for this repo.`);
+        }
         // try the next candidate
       }
     }
@@ -446,6 +477,27 @@ export class GitHubCollector {
         result.skippedPullRequests += 1;
         continue;
       }
+      // pulls.list items carry no additions/deletions/changed_files — sum them
+      // from the file pages fetched below instead of persisting zeros. (The
+      // pagination caps at 3,000 files per PR, so larger PRs under-count.)
+      const paths: string[] = [];
+      let additions = 0;
+      let deletions = 0;
+      for await (const { data: filePage } of this.octokit.paginate.iterator(this.octokit.rest.pulls.listFiles, {
+        owner,
+        repo,
+        pull_number: number,
+        per_page: 100,
+      })) {
+        for (const file of filePage) {
+          if (typeof file.filename === 'string') {
+            paths.push(file.filename);
+          }
+          additions += file.additions ?? 0;
+          deletions += file.deletions ?? 0;
+        }
+      }
+
       const record: PullRequestRecord = {
         repo: name,
         number,
@@ -457,24 +509,10 @@ export class GitHubCollector {
         headSha,
         mergedAt: pr.merged_at ?? null,
         body: pr.body ?? '',
-        additions: pr.additions ?? 0,
-        deletions: pr.deletions ?? 0,
-        changedFiles: pr.changed_files ?? 0,
+        additions,
+        deletions,
+        changedFiles: paths.length,
       };
-
-      const paths: string[] = [];
-      for await (const { data: filePage } of this.octokit.paginate.iterator(this.octokit.rest.pulls.listFiles, {
-        owner,
-        repo,
-        pull_number: number,
-        per_page: 100,
-      })) {
-        for (const file of filePage) {
-          if (typeof file.filename === 'string') {
-            paths.push(file.filename);
-          }
-        }
-      }
 
       const reviewCommentsByReview = new Map<number, ReviewCommentRecord[]>();
       for await (const { data: commentPage } of this.octokit.paginate.iterator(

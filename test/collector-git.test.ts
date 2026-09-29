@@ -85,7 +85,7 @@ describe('GitDirectoryCollector', () => {
     // subject commits get the canonical login; teammates keep their email
     expect(commits.filter((commit) => commit.authorLogin === 'alice')).toHaveLength(2);
     expect(commits.find((commit) => commit.message === 'document deploy')?.authorLogin).toBe('bob@corp.dev');
-    expect(store.getMeta('source')).toBe('local-git');
+    expect(store.getMeta('collected_via')).toBe('local-git');
     expect(store.getMeta('collected_for')).toBe('alice');
     expect(store.getMeta('repos')).toBe(path.basename(dir));
     // additions parsed from numstat — found by message, not position:
@@ -213,5 +213,39 @@ describe('GitDirectoryCollector', () => {
     messages.length = 0;
     await new GitDirectoryCollector().collectInto(store, 'alice', [dir], { onProgress: progress });
     expect(messages.some((message) => message.includes('collected with author identity'))).toBe(true);
+  });
+});
+
+describe('timestamp normalization and history pruning', () => {
+  it('stores author dates normalized to UTC like the GitHub path', async () => {
+    const dir = await makeRepo();
+    await commitFile(dir, ALICE.name, ALICE.email, 'payments/charge.ts', 'a\n', 'offset commit', '2026-09-01T10:00:00+08:00');
+    const store = HandoverStore.inMemory();
+    await new GitDirectoryCollector().collectInto(store, 'alice', [dir], {});
+    // 10:00+08:00 is 02:00Z — lexicographic comparisons downstream need one form
+    expect(store.allCommits()[0]?.authoredAt).toBe('2026-09-01T02:00:00Z');
+    store.close();
+  });
+
+  it('prunes commits rewritten away (amend) on a full re-index', async () => {
+    const dir = await makeRepo();
+    await commitFile(dir, ALICE.name, ALICE.email, 'payments/a.ts', 'a\n', 'original', '2026-09-01T00:00:00Z');
+    const store = HandoverStore.inMemory();
+    const first = await new GitDirectoryCollector().collectInto(store, 'alice', [dir], {});
+    expect(first.indexedCommits).toBe(1);
+    const originalSha = store.allCommits()[0]!.sha;
+
+    await writeFile(path.join(dir, 'payments/a.ts'), 'a\nb\n', 'utf8');
+    await gitIn(dir, ['add', '--', 'payments/a.ts']);
+    await execFileAsync('git', ['-C', dir, 'commit', '-q', '--amend', '-m', 'original, amended'], {
+      env: { ...process.env, GIT_AUTHOR_NAME: ALICE.name, GIT_AUTHOR_EMAIL: ALICE.email, GIT_COMMITTER_NAME: ALICE.name, GIT_COMMITTER_EMAIL: ALICE.email },
+    });
+
+    const second = await new GitDirectoryCollector().collectInto(store, 'alice', [dir], {});
+    expect(second.indexedCommits).toBe(1);
+    const shas = store.allCommits().map((entry) => entry.sha);
+    expect(shas).not.toContain(originalSha);
+    expect(shas).toHaveLength(1);
+    store.close();
   });
 });

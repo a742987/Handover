@@ -34,6 +34,10 @@ export class HandoverStore {
 
   constructor(dbPath: string) {
     this.db = new DatabaseSync(dbPath);
+    // Wait on a locked database (CLI and MCP server can touch the same index)
+    // instead of failing mid-write — Windows file locking makes any overlap
+    // an instant SQLITE_BUSY otherwise.
+    this.db.exec('PRAGMA busy_timeout = 5000');
     this.migrate();
   }
 
@@ -206,6 +210,41 @@ export class HandoverStore {
     return this.db.prepare(sql).get(...params) as unknown as Row | undefined;
   }
 
+  /** SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 32766 — a full history listing
+   * of a large repo exceeds it. Small/bounded lists (repo scopes, review ids)
+   * stay as chunked NOT IN clauses; unbounded prune lists use the temp table below. */
+  private notInClauses(column: string, values: Array<string | number>): { sql: string; values: Array<string | number> } {
+    const CHUNK = 5_000;
+    const clauses: string[] = [];
+    const chunked: Array<string | number> = [];
+    for (let i = 0; i < values.length; i += CHUNK) {
+      const chunk = values.slice(i, i + CHUNK);
+      clauses.push(`${column} NOT IN (${chunk.map(() => '?').join(',')})`);
+      chunked.push(...chunk);
+    }
+    return { sql: clauses.join(' AND '), values: chunked };
+  }
+
+  /**
+   * Stages a (possibly huge) "seen" list into a temp table so prune deletes can
+   * compare against `NOT IN (SELECT value …)` without any bind-variable limit.
+   * The column is declared without affinity so stored TEXT and INTEGER values
+   * keep their native comparison against sha/number columns. Call
+   * clearStagedValues() when done — the temp table is per-connection.
+   */
+  private stageSeenValues(values: Array<string | number>): void {
+    this.db.exec('CREATE TEMP TABLE IF NOT EXISTS seen_values (value)');
+    this.db.exec('DELETE FROM seen_values');
+    const insert = this.db.prepare('INSERT INTO seen_values (value) VALUES (?)');
+    for (const value of values) {
+      insert.run(value);
+    }
+  }
+
+  private clearStagedValues(): void {
+    this.db.exec('DELETE FROM seen_values');
+  }
+
   /** Keeps multi-statement upserts (parent + child rows) atomic across a crash. */
   private transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN');
@@ -273,11 +312,13 @@ export class HandoverStore {
     }
     const stored = strOrNull(row['updated_at']);
     const storedHeadSha = strOrNull(row['head_sha']);
-    // updated_at covers comments/reviews/merge; head_sha covers new commits pushed to the branch
+    // updated_at covers comments/reviews/merge; head_sha covers new commits pushed to the branch.
+    // A stored NULL head_sha (row predates the column) can never prove freshness —
+    // treat it as stale so the PR is refetched once and the column gets filled.
     if (stored === null || stored < updatedAt) {
       return false;
     }
-    if (headSha !== undefined && storedHeadSha !== null && storedHeadSha !== headSha) {
+    if (headSha !== undefined && (storedHeadSha === null || storedHeadSha !== headSha)) {
       return false;
     }
     return true;
@@ -442,9 +483,10 @@ export class HandoverStore {
       return;
     }
     // build the NOT IN list; reviews not in the seen set are deleted
-    const placeholders = seenReviewIds.map(() => '?').join(',');
-    this.run(`DELETE FROM review_comments WHERE repo = ? AND pr_number = ? AND review_id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
-    this.run(`DELETE FROM reviews WHERE repo = ? AND pr_number = ? AND id NOT IN (${placeholders})`, repo, prNumber, ...seenReviewIds);
+    const commentsNotSeen = this.notInClauses('review_id', seenReviewIds);
+    const reviewsNotSeen = this.notInClauses('id', seenReviewIds);
+    this.run(`DELETE FROM review_comments WHERE repo = ? AND pr_number = ? AND ${commentsNotSeen.sql}`, repo, prNumber, ...commentsNotSeen.values);
+    this.run(`DELETE FROM reviews WHERE repo = ? AND pr_number = ? AND ${reviewsNotSeen.sql}`, repo, prNumber, ...reviewsNotSeen.values);
   }
 
   upsertIssue(issue: IssueRecord): void {
@@ -526,7 +568,7 @@ export class HandoverStore {
     if (repos.length === 0) {
       return;
     }
-    const placeholders = repos.map(() => '?').join(',');
+    const { sql, values } = this.notInClauses('repo', repos);
     this.transaction(() => {
       for (const table of [
         'commits',
@@ -539,7 +581,7 @@ export class HandoverStore {
         'issue_labels',
         'issue_comments',
       ]) {
-        this.run(`DELETE FROM ${table} WHERE repo NOT IN (${placeholders})`, ...repos);
+        this.run(`DELETE FROM ${table} WHERE ${sql}`, ...values);
       }
     });
   }
@@ -553,10 +595,11 @@ export class HandoverStore {
     if (shas.length === 0) {
       return;
     }
-    const placeholders = shas.map(() => '?').join(',');
     this.transaction(() => {
-      this.run(`DELETE FROM commit_files WHERE repo = ? AND sha NOT IN (${placeholders})`, repo, ...shas);
-      this.run(`DELETE FROM commits WHERE repo = ? AND sha NOT IN (${placeholders})`, repo, ...shas);
+      this.stageSeenValues(shas);
+      this.run('DELETE FROM commit_files WHERE repo = ? AND sha NOT IN (SELECT value FROM seen_values)', repo);
+      this.run('DELETE FROM commits WHERE repo = ? AND sha NOT IN (SELECT value FROM seen_values)', repo);
+      this.clearStagedValues();
     });
   }
 
@@ -569,15 +612,25 @@ export class HandoverStore {
     if (numbers.length === 0) {
       return;
     }
-    const placeholders = numbers.map(() => '?').join(',');
     this.transaction(() => {
-      this.run(`DELETE FROM pr_files WHERE repo = ? AND pr_number NOT IN (${placeholders})`, repo, ...numbers);
-      this.run(`DELETE FROM review_comments WHERE repo = ? AND pr_number NOT IN (${placeholders})`, repo, ...numbers);
-      this.run(`DELETE FROM reviews WHERE repo = ? AND pr_number NOT IN (${placeholders})`, repo, ...numbers);
-      this.run(`DELETE FROM issue_comments WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 1)`, repo, repo, ...numbers);
-      this.run(`DELETE FROM issue_labels WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 1)`, repo, repo, ...numbers);
-      this.run(`DELETE FROM issues WHERE repo = ? AND is_pull_request = 1 AND number NOT IN (${placeholders})`, repo, ...numbers);
-      this.run(`DELETE FROM pull_requests WHERE repo = ? AND number NOT IN (${placeholders})`, repo, ...numbers);
+      this.stageSeenValues(numbers);
+      this.run('DELETE FROM pr_files WHERE repo = ? AND pr_number NOT IN (SELECT value FROM seen_values)', repo);
+      this.run('DELETE FROM review_comments WHERE repo = ? AND pr_number NOT IN (SELECT value FROM seen_values)', repo);
+      this.run('DELETE FROM reviews WHERE repo = ? AND pr_number NOT IN (SELECT value FROM seen_values)', repo);
+      // The mirrored issue rows of pruned PRs (comments, labels included).
+      this.run(
+        'DELETE FROM issue_comments WHERE repo = ? AND issue_number NOT IN (SELECT value FROM seen_values) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 1)',
+        repo,
+        repo,
+      );
+      this.run(
+        'DELETE FROM issue_labels WHERE repo = ? AND issue_number NOT IN (SELECT value FROM seen_values) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 1)',
+        repo,
+        repo,
+      );
+      this.run('DELETE FROM issues WHERE repo = ? AND is_pull_request = 1 AND number NOT IN (SELECT value FROM seen_values)', repo);
+      this.run('DELETE FROM pull_requests WHERE repo = ? AND number NOT IN (SELECT value FROM seen_values)', repo);
+      this.clearStagedValues();
     });
   }
 
@@ -586,11 +639,20 @@ export class HandoverStore {
     if (numbers.length === 0) {
       return;
     }
-    const placeholders = numbers.map(() => '?').join(',');
     this.transaction(() => {
-      this.run(`DELETE FROM issue_comments WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 0)`, repo, repo, ...numbers);
-      this.run(`DELETE FROM issue_labels WHERE repo = ? AND issue_number NOT IN (${placeholders}) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 0)`, repo, repo, ...numbers);
-      this.run(`DELETE FROM issues WHERE repo = ? AND is_pull_request = 0 AND number NOT IN (${placeholders})`, repo, ...numbers);
+      this.stageSeenValues(numbers);
+      this.run(
+        'DELETE FROM issue_comments WHERE repo = ? AND issue_number NOT IN (SELECT value FROM seen_values) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 0)',
+        repo,
+        repo,
+      );
+      this.run(
+        'DELETE FROM issue_labels WHERE repo = ? AND issue_number NOT IN (SELECT value FROM seen_values) AND issue_number IN (SELECT number FROM issues WHERE repo = ? AND is_pull_request = 0)',
+        repo,
+        repo,
+      );
+      this.run('DELETE FROM issues WHERE repo = ? AND is_pull_request = 0 AND number NOT IN (SELECT value FROM seen_values)', repo);
+      this.clearStagedValues();
     });
   }
 

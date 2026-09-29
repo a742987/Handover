@@ -23,12 +23,37 @@ function escapeHtml(text: string): string {
   return text.replace(/[&<>"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[char]!);
 }
 
+/** Numeric character references outside Unicode are invalid — clamp instead of
+ * letting String.fromCodePoint throw a RangeError that aborts the whole render. */
+function fromCodePoint(code: number): string {
+  return Number.isInteger(code) && code >= 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '\uFFFD';
+}
+
+/**
+ * Named entities that can produce a scheme colon or smuggle whitespace past a
+ * URL check. Unknown named entities stay literal — without a decoded `:` they
+ * cannot form a URL scheme, which is the only thing the scheme check cares
+ * about.
+ */
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  colon: ':',
+  sol: '/',
+  bsol: '\\',
+  Tab: '\t',
+  NewLine: '\n',
+};
+
 function decodeHtmlEntities(value: string): string {
   const once = (input: string): string =>
     input
-      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => String.fromCodePoint(parseInt(hex, 16)))
-      .replace(/&#(\d+);/g, (_, dec: string) => String.fromCodePoint(Number(dec)))
-      .replace(/&(amp|lt|gt|quot|apos);/gi, (_, name: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" })[name.toLowerCase()]!);
+      .replace(/&#x([0-9a-f]+);/gi, (_, hex: string) => fromCodePoint(parseInt(hex, 16)))
+      .replace(/&#(\d+);/g, (_, dec: string) => fromCodePoint(Number(dec)))
+      .replace(/&([a-zA-Z][a-zA-Z0-9]*);/g, (match, name: string) => NAMED_ENTITIES[name] ?? match);
   // double-encoded payloads ("&amp;#106;avascript:") need a second pass to be
   // recognizable as the scheme they really are
   let out = value;
@@ -42,19 +67,33 @@ function decodeHtmlEntities(value: string): string {
   return out;
 }
 
-const UNSAFE_SCHEME = /^(javascript|vbscript|data)\s*:/i;
+/**
+ * Scheme allowlist. A denylist after partial decoding cannot enumerate what
+ * browsers accept (`javascript&colon;`, entity-encoded tabs inside the scheme
+ * word…), so the check is inverted: after decoding entities and stripping the
+ * whitespace/control bytes browsers drop from URLs, ANY explicit scheme is
+ * rejected unless it is explicitly safe.
+ */
+function isSafeUrl(decoded: string): boolean {
+  const stripped = decoded.replace(/[\t\n\r\x00-\x20]/g, '').toLowerCase();
+  const scheme = /^([a-z][a-z0-9+.-]*):/.exec(stripped);
+  if (!scheme) {
+    return true; // relative URL or fragment
+  }
+  return (scheme[1] === 'http' || scheme[1] === 'https' || scheme[1] === 'mailto');
+}
 
-const DANGEROUS_ELEMENTS = /\s*<(script|style|iframe|object|embed|form|link|meta|base)\b[\s\S]*?<\/\1\s*>\s*/gi;
-const DANGEROUS_ELEMENTS_OPEN = /<(script|style|iframe|object|embed|form|link|meta|base)\b[^>]*\/?>/gi;
+const DANGEROUS_ELEMENTS = /\s*<(script|style|iframe|object|embed|form|link|meta|base|animate|set|foreignobject)\b[\s\S]*?<\/\1\s*>\s*/gi;
+const DANGEROUS_ELEMENTS_OPEN = /<(script|style|iframe|object|embed|form|link|meta|base|animate|set|foreignobject)\b[^>]*\/?>/gi;
 const EVENT_ATTRIBUTES = /\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi;
-const URL_ATTRIBUTES = /(\s+(?:xlink:)?(?:href|src)\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
+const URL_ATTRIBUTES = /(\s+(?:xlink:)?(?:href|src|action|formaction)\s*=\s*)("[^"]*"|'[^']*'|[^\s>]+)/gi;
 
 /**
  * Defense-in-depth pass over the rendered chapter HTML. Repo-derived text is
  * already escaped at its source (see render/escape.ts), but LLM chapters quote
  * that content back and can emit markup of their own — so the final HTML must
  * not trust it: dangerous elements are dropped, event handlers are stripped,
- * and script-bearing URLs are neutralized.
+ * and non-allowlisted URL schemes are neutralized.
  */
 function sanitizeBookHtml(html: string): string {
   return html
@@ -64,14 +103,20 @@ function sanitizeBookHtml(html: string): string {
     .replace(URL_ATTRIBUTES, (match, prefix: string, raw: string) => {
       const quoted = raw.length >= 2 && (raw.startsWith('"') || raw.startsWith("'"));
       const value = quoted ? raw.slice(1, -1) : raw;
-      const decoded = decodeHtmlEntities(value).trim();
-      return UNSAFE_SCHEME.test(decoded) ? `${prefix}"#"` : match;
+      return isSafeUrl(decodeHtmlEntities(value)) ? match : `${prefix}"#"`;
     });
 }
 
 /** Single-file, print-ready HTML twin of the markdown book (browser print → PDF). */
 export function renderBookHtml(book: HandoverBook, markdown: string): string {
-  let body = marked.parse(markdown, { async: false }) as string;
+  // marked parses `<script`-style tags as raw HTML blocks, and a malformed
+  // closing tag (`</script >`) makes the block swallow the markdown that
+  // follows it — the sanitizer would then delete the swallowed content for
+  // good. Neutralize the opening angle bracket up front so dangerous tags
+  // render as visible text instead; the sanitizer below stays as
+  // defense-in-depth for anything that still slips through as markup.
+  const neutered = markdown.replace(/<(\/?)(script|style|iframe|object|embed|form|link|meta|base)\b/gi, '&lt;$1$2');
+  let body = marked.parse(neutered, { async: false }) as string;
   body = sanitizeBookHtml(body);
   body = body.replace(/<a href="(https?:\/\/[^"]*)"/g, '<a target="_blank" rel="noopener noreferrer" href="$1"');
   return [

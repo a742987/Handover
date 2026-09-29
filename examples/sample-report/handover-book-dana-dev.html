@@ -27,7 +27,7 @@
 <p><em>When a developer leaves, their knowledge shouldn&#39;t.</em></p>
 <ul>
 <li><strong>Repositories:</strong> demo-shop</li>
-<li><strong>Generated:</strong> 2026-09-28T12:39:48.409Z</li>
+<li><strong>Generated:</strong> 2026-09-29T02:25:16.461Z</li>
 <li><strong>Chapters:</strong> 6</li>
 <li><strong>Synthesis:</strong> deterministic (no LLM key configured)</li>
 </ul>
@@ -117,7 +117,7 @@
 <td>2026-08-10</td>
 </tr>
 <tr>
-<td><code>\(root\)</code></td>
+<td><code>(root)</code></td>
 <td>1</td>
 <td>100%</td>
 <td>2026-03-01</td>
@@ -129,17 +129,17 @@
 <td>2026-05-02</td>
 </tr>
 </tbody></table>
-<p>Their centre of gravity: <code>payments</code> in demo-shop, <code>infra</code> in demo-shop, <code>auth</code> in demo-shop, <code>\(root\)</code> in demo-shop, <code>docs</code> in demo-shop.</p>
+<p>Their centre of gravity: <code>payments</code> in demo-shop, <code>infra</code> in demo-shop, <code>auth</code> in demo-shop, <code>(root)</code> in demo-shop, <code>docs</code> in demo-shop.</p>
 <h2>2. Implicit Knowledge Inventory</h2>
 <p>Modules where the knowledge is concentrated in one person — the successor has no fallback author or reviewer there.</p>
 <h3>Sole or dominant author</h3>
 <ul>
-<li><code>demo\-shop:infra</code> — 100% of commits by @dana-dev</li>
-<li><code>demo\-shop:\(root\)</code> — 100% of commits by @dana-dev</li>
+<li><code>demo-shop:infra</code> — 100% of commits by @dana-dev</li>
+<li><code>demo-shop:(root)</code> — 100% of commits by @dana-dev</li>
 </ul>
 <h3>Sole reviewer</h3>
 <ul>
-<li><code>demo\-shop:payments</code> — every review on this module&#39;s PRs was by @dana-dev [#17 review:105]</li>
+<li><code>demo-shop:payments</code> — every review on this module&#39;s PRs was by @dana-dev [#17 review:105]</li>
 </ul>
 <h2>3. Risk Top 5</h2>
 <p>Scored as <code>sole_contribution_ratio × change_frequency × incident_weight × irreplaceability</code>. Every item lists its evidence chain.</p>
@@ -232,17 +232,17 @@
 <blockquote>
 <p>payments/webhooks.ts. The replay guard works but the capture window is keyed off an in-memory map — one pod restart and we re-process webhooks. I would make it durable before touching anything else.</p>
 </blockquote>
-<p>   — captured 2026-09-28
+<p>   — captured 2026-09-29
 2. <strong>Which piece of the system looks wrong but must not be &quot;fixed&quot; — and what broke the last time someone tried?</strong></p>
 <blockquote>
 <p>The double-submit in checkout looks like a bug; it is how we dedupe against the provider. Removing it caused issue #9 (double charges on retry). The idempotency keys in PR #17 are the fix — do not remove them.</p>
 </blockquote>
-<p>   — captured 2026-09-28
+<p>   — captured 2026-09-29
 3. <strong>Which deploy/migration quirk is load-bearing?</strong></p>
 <blockquote>
 <p>The canary health-check timeout in infra/deploy.sh must stay at 30s to match the load balancer; anything shorter flaps the EU region (issue #31). And always run the migration dry-run first — the users table has a hand-patched index from the 2024 incident.</p>
 </blockquote>
-<p>   — captured 2026-09-28</p>
+<p>   — captured 2026-09-29</p>
 <h2>Appendix — evidence register</h2>
 <table>
 <thead>

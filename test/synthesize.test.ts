@@ -166,3 +166,21 @@ describe('synthesizeChapters (with provider)', () => {
     }
   });
 });
+
+describe('module-name injection', () => {
+  it('renders a module name containing backticks and markup as an inert code span', async () => {
+    const { marked } = await import('marked');
+    const store = HandoverStore.inMemory();
+    store.upsertCommit(commit('e'.padEnd(40, '0'), USERNAME, '2026-09-01T00:00:00Z', 'evil`<img src=x onerror=alert(1)>`b/file.ts'));
+    store.setMeta('repos', REPO);
+    const risks = computeRisk(store, USERNAME, { now: NOW });
+    const chapters = await synthesizeChapters({ username: USERNAME, repos: [REPO], store, risks }, null);
+    const risksChapter = chapters.find((chapter) => chapter.id === 3)!;
+    // the raw module text survives as evidence text, but fenced so marked escapes it
+    expect(risksChapter.content).toContain('``acme/api:evil`');
+    const html = marked.parse(risksChapter.content, { async: false }) as string;
+    expect(html).not.toContain('<img');
+    expect(html).toContain('&lt;img');
+    store.close();
+  });
+});

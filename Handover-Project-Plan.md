@@ -2,10 +2,12 @@
 
 > **Note (2026-09-28):** this is the original project plan, kept for reference.
 > Where it disagrees with the current implementation, the README and source are
-> authoritative. Known divergences: output is markdown-only (no PDF/HTML reader
-> yet), collection is REST-only (no GraphQL/reactions), chapters 1–3 are
-> deterministic and only 4–6 use the LLM (the plan reversed this), and
-> `-r owner/name` is required (`npx handover gen <username>` alone does not work).
+> authoritative. Known divergences: output is markdown + a print-ready HTML twin
+> (no PDF reader yet), collection is REST-only (no GraphQL/reactions), chapters
+> 1–3 are deterministic and only 4–6 use the LLM (the plan reversed this), and
+> the quickstart path is `gen <username> -r owner/name` **or** `-d <clone dir>`
+> (the plan's username-only invocation does not work — the tool needs to know
+> which repositories to read).
 
 > **One command.** Point Handover at a departing engineer's username, and it reads everything they ever committed, reviewed, and argued for — then produces a bound, evidence-linked *Handover Book* for the person who takes their place.
 

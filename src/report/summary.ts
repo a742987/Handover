@@ -1,5 +1,7 @@
 import type { ActionItem, BookCoverage, RiskItem } from '../types.js';
 import type { HandoverStore } from '../store/sqlite.js';
+import { codeSpan } from '../render/escape.js';
+import { isBotLogin } from '../risk/engine.js';
 
 const SOURCE_LABELS: Record<string, string> = {
   github: 'GitHub API (commits, PRs, reviews, issues)',
@@ -60,7 +62,9 @@ export function buildCoverage(store: HandoverStore, repos: string[]): BookCovera
   for (const commit of commits) {
     if (commit.authorLogin === 'unknown') {
       unattributed += 1;
-    } else {
+    } else if (!isBotLogin(commit.authorLogin)) {
+      // CI bots (dependabot[bot], …) are not teammates — they must not read as
+      // "other people who can take over"
       authors.add(commit.authorLogin);
     }
     if (!from || commit.authoredAt < from) {
@@ -119,15 +123,15 @@ export function buildCoverage(store: HandoverStore, repos: string[]): BookCovera
 function questionFor(risk: RiskItem, username: string): string {
   const parts: string[] = [];
   if (risk.factors.soleContributionRatio >= 0.9) {
-    parts.push(`Has anyone besides @${username} shipped, deployed or rolled back \`${risk.module}\` — and if not, what was never written down?`);
+    parts.push(`Has anyone besides @${username} shipped, deployed or rolled back ${codeSpan(risk.module)} — and if not, what was never written down?`);
   }
   if (risk.factors.irreplaceability >= 1.5) {
-    parts.push(`Who can review changes to \`${risk.module}\` after @${username} leaves, and is that person confident doing it today?`);
+    parts.push(`Who can review changes to ${codeSpan(risk.module)} after @${username} leaves, and is that person confident doing it today?`);
   }
   if (parts.length > 0) {
     return parts.join(' ');
   }
-  return `Who else understands \`${risk.module}\` well enough to own it, and what would they need to learn first?`;
+  return `Who else understands ${codeSpan(risk.module)} well enough to own it, and what would they need to learn first?`;
 }
 
 const LIMITATION =
@@ -145,7 +149,7 @@ export function buildActions(risks: RiskItem[], username: string): ActionItem[] 
       finding: risk.rationale,
       question: questionFor(risk, username),
       confirmWith: `@${username} (the departing engineer)`,
-      nextStep: `Have the successor read and run \`${risk.module}\`, then walk this item with @${username} and record the answer with \`handover capture\`.`,
+      nextStep: `Have the successor read and run ${codeSpan(risk.module)}, then walk this item with @${username} and record the answer with \`handover capture\`.`,
       limitation: LIMITATION,
       evidence: risk.evidence,
     }));

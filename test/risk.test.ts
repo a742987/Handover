@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { HandoverStore } from '../src/store/sqlite.js';
-import { computeRisk, moduleOf } from '../src/risk/engine.js';
+import { computeRisk, moduleOf, isBotLogin } from '../src/risk/engine.js';
+import { computeBusFactor } from '../src/risk/busfactor.js';
 import type { CommitRecord } from '../src/types.js';
 
 const REPO = 'acme/api';
@@ -161,5 +162,38 @@ describe('unattributed commits', () => {
     // with the sentinel folding into isUser, the ratio would exceed 1 and the
     // module would rank as sole-owned by nobody
     expect(computeRisk(store, 'unknown', { now: NOW })).toHaveLength(0);
+  });
+});
+
+describe('bot logins', () => {
+  it('isBotLogin matches the CI-bot naming convention', () => {
+    expect(isBotLogin('dependabot[bot]')).toBe(true);
+    expect(isBotLogin('renovate[bot]')).toBe(true);
+    expect(isBotLogin('github-actions[bot]')).toBe(true);
+    expect(isBotLogin('alice')).toBe(false);
+    expect(isBotLogin('bot')).toBe(false);
+    expect(isBotLogin('robot[botfan]')).toBe(false);
+  });
+
+  it('excludes bot commits from ownership ratios instead of diluting them', () => {
+    const store = HandoverStore.inMemory();
+    for (let i = 0; i < 3; i += 1) {
+      store.upsertCommit(commit(`a${i}`.padEnd(40, '0'), 'alice', isoDaysAgo(1 + i), 'payments/charge.ts'));
+    }
+    store.upsertCommit(commit('b'.padEnd(40, '0'), 'dependabot[bot]', isoDaysAgo(1), 'payments/deps.lock'));
+    const risks = computeRisk(store, 'alice', { now: NOW });
+    const payments = risks.find((risk) => risk.module === `${REPO}:payments`);
+    // without the exclusion the ratio would be 3/4
+    expect(payments?.factors.soleContributionRatio).toBe(1);
+  });
+
+  it('bus-factor ignores bot commits — bots are not fallback owners', () => {
+    const store = HandoverStore.inMemory();
+    store.upsertCommit(commit('a'.padEnd(40, '0'), 'alice', isoDaysAgo(1), 'payments/charge.ts'));
+    store.upsertCommit(commit('b'.padEnd(40, '0'), 'renovate[bot]', isoDaysAgo(2), 'payments/deps.lock'));
+    const items = computeBusFactor(store, { now: NOW });
+    const payments = items.find((item) => item.module === `${REPO}:payments`);
+    expect(payments?.distinctAuthors).toBe(1);
+    expect(payments?.status).toBe('critical');
   });
 });

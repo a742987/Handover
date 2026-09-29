@@ -26,35 +26,44 @@ Handover couvre les pertes implicites que rien d'autre ne couvre :
 3. **Top 5 des risques** — « ce qui casse quand cette personne part », classé et noté, chaque point avec sa chaîne de preuves
 4. **Archéologie des décisions** — « pourquoi on a choisi ça à l'époque », en citant les vrais débats de PR et d'issues
 5. **Le parcours des 30 jours** — le plan d'apprentissage de la personne qui succède
-6. **Lettre au futur** — les questions que posera la personne qui succède, répondues avec la voix même de la personne qui part
+6. **Questions et réponses en brouillon** — ce qu'il faut demander avant le dernier jour, plus les réponses que la personne qui part a elle-même enregistrées
 
 ## Démarrage rapide
 
-Prérequis : **Node ≥ 22.13** (livré avec SQLite intégré — pas de compilation native), un token GitHub pour des limites de requêtes raisonnables.
+Le chemin le plus court — une seule commande, sans cloner le dépôt (nécessite Node ≥ 22.13, livré avec SQLite intégré — pas de compilation native) :
 
 ```bash
-git clone https://github.com/a742987/Handover.git && cd Handover
-npm install
+npm install -g handover-book
 
-export GITHUB_TOKEN=ghp_...          # repo scope for private repos
-npm run dev -- gen <username> --repo owner/name
+# depuis GitHub (nécessite un token pour des limites de requêtes raisonnables) :
+export GITHUB_TOKEN=ghp_...
+handover gen <username> --repo owner/name --html
+
+# ou sans token et sans réseau — lisez directement les clones locaux de la personne :
+handover gen <username> --git-dir ~/work/api --git-dir ~/work/web
 ```
 
 Le résultat atterrit dans `handover-data/` :
 
 - `handover-data/<username>.db` — l'index SQLite local (un fichier par personne ; les exécutions suivantes sont incrémentales et quasi instantanées)
-- `handover-data/handover-book-<username>.md` — le livre relié
+- `handover-data/handover-book-<username>.md` — le livre relié (avec `--html`, un jumeau HTML monofichier prêt à imprimer ; l'impression depuis le navigateur vous donne le PDF)
+
+Vous préférez l'exécuter depuis les sources ? `git clone https://github.com/a742987/Handover && cd Handover && npm install && npm run dev -- gen <username> --repo owner/name`.
 
 ### Commandes
 
 | Commande | Ce qu'elle fait |
 |---|---|
 | `gen <username> -r owner/name` | collecter → analyser → générer le livre complet |
-| `collect <username> -r owner/name` | indexer uniquement l'historique GitHub (les commits, PRs, reviews et issues déjà présents dans l'index sont ignorés) |
-| `risk <username>` | afficher le Top 5 des risques à partir de l'index local |
+| `collect <username> -r owner/name [-d dir]` | indexer uniquement l'historique (les commits, PRs, reviews et issues déjà présents dans l'index sont ignorés) |
+| `capture <username>` | s'asseoir avec la personne qui part et enregistrer ses propres réponses ; elles sont reliées dans le chapitre 6 (`--answers q.json` pour les agents et les scripts) |
+| `risk <username> [--json]` | afficher le Top 5 des risques à partir de l'index local |
+| `bus-factor <username>` | vue d'équipe : quels modules ne reçoivent des commits que d'une seule personne, avec fusion de CODEOWNERS quand le dépôt en a un |
+| `gate <username> --files changed.txt` | contrôle CI : ce jeu de changements touche-t-il des modules à propriétaire unique ? (`--comment`, `--fail-on-match`, `--repo owner/name` pour circonscrire un index multi-dépôts ; voir [`examples/sole-owner-gate-action.yml`](examples/sole-owner-gate-action.yml)) |
+| `verify <username>` | contrôle d'existence des citations : chaque référence citée dans le livre généré doit exister dans l'index (exit 1 s'il en manque — compatible CI, `--json` pour les machines) |
 | `render <username>` | régénérer le livre à partir de l'index, sans accès à GitHub (les chapitres 4-6 n'appellent le fournisseur LLM que si une clé API est configurée ; passez `-r` pour remplacer les dépôts enregistrés dans l'index) |
 
-Flags courants : `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (récupère à nouveau ce qui est déjà indexé).
+Flags courants : `--provider openai|anthropic|ollama`, `--model <model>`, `--since <ISO date>`, `--data-dir <dir>`, `--refresh` (récupère à nouveau ce qui est déjà indexé), `--html` (jumeau HTML prêt à imprimer), `--redact` (supprime les formats de secrets connus du résumé destiné au LLM et du livre ; aussi `HANDOVER_REDACT=1`), `--no-llm` (saute la synthèse LLM même quand une clé est configurée — uniquement des chapitres déterministes, rien ne quitte la machine ; aussi `HANDOVER_NO_LLM=1`). `gen` et `collect` acceptent `--author <identity>` pour faire correspondre le nom/courriel de la personne qui part dans les clones locaux.
 
 ### Fournisseurs de LLM
 
@@ -82,16 +91,16 @@ Chaque point du Top 5 des risques liste les commits, reviews et issues exacts qu
 ```
 ┌──────────────┐   ┌───────────────┐   ┌──────────────┐   ┌───────────────┐
 │  Collect     │ → │  Distill      │ → │  Risk Engine │ → │  Render       │
-│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown book│
-│  (Octokit)   │   │  topic clusters│  │  change freq │   │  (PDF/HTML:   │
-│              │   │  Q&A extraction│  │  incidents   │   │   on roadmap) │
+│  GitHub API  │   │  LLM synthesis│   │  sole-contrib│   │  Markdown +   │
+│  (Octokit)   │   │  topic clusters│  │  change freq │   │  print-ready  │
+│  Local git   │   │  Q&A capture  │  │  incidents   │   │  HTML book    │
 └──────────────┘   └───────────────┘   └──────────────┘   └───────────────┘
           └────────── SQLite index (one file per person, cacheable) ─────────┘
 ```
 
 ## Plugins d'éditeur
 
-Le même CLI pilote trois intégrations. La couche commune est un **serveur MCP intégré** (`handover-mcp`, livré dans le paquet npm) qui expose `handover_generate`, `handover_collect`, `handover_risk` et `handover_render` comme outils — n'importe quel client MCP peut l'utiliser sans passer par le CLI.
+Le même CLI pilote trois intégrations. La couche commune est un **serveur MCP intégré** (`handover-mcp`, livré dans le paquet npm) qui expose `handover_generate`, `handover_collect`, `handover_risk`, `handover_capture`, `handover_search` (consultation de preuves en lecture seule pour les questions de suivi) et `handover_render` comme outils — n'importe quel client MCP peut l'utiliser sans passer par le CLI.
 
 ```bash
 npm install -g handover-book   # puts both `handover` and `handover-mcp` on PATH
@@ -119,7 +128,7 @@ Le plugin enregistre automatiquement le serveur MCP `handover` (via le champ `mc
    ```
 2. Copiez [`codex/handover.md`](codex/handover.md) vers `~/.codex/prompts/handover.md`, puis lancez `/handover <username> --repo owner/name`.
 
-**Tout autre client MCP** (Cursor, ZCode, …) — enregistrez `handover-mcp` comme serveur stdio ; les mêmes quatre outils partout.
+**Tout autre client MCP** (Cursor, ZCode, …) — enregistrez `handover-mcp` comme serveur stdio ; les mêmes six outils partout.
 
 ## Vie privée et éthique — lisez ceci avant de le lancer pour quelqu'un
 
@@ -144,9 +153,16 @@ Stack : TypeScript · Node (`node:sqlite` intégré) · Octokit · fournisseurs 
 
 - [x] Squelette du dépôt : CLI + collecte Octokit + index SQLite + moteur de risque + livre Markdown
 - [x] Serveur MCP (`handover-mcp`) + plugin Claude Code + prompt Codex
-- [ ] `npx handover-book gen` de bout en bout sur un vrai dépôt public (MVP, semaines 1–3)
-- [ ] Sortie PDF / HTML et la démo de tournage de pages
-- [ ] Parcours des 30 jours + Lettre au futur avec une finition par transfert de style du LLM (v0.2)
+- [x] Collecte depuis des clones git locaux (`--git-dir`) — sans token, sans réseau
+- [x] `handover capture` — questions/réponses à la première personne reliées dans le chapitre 6 (CLI + MCP)
+- [x] `handover bus-factor` — vue d'équipe avec fusion de CODEOWNERS
+- [x] Jumeau HTML monofichier prêt à imprimer (`--html` ; impression depuis le navigateur → PDF)
+- [x] Intégration CI — `risk --json`, commande `gate` + workflow d'exemple
+- [x] Outil MCP `handover_search` + nettoyage des secrets avec `--redact`
+- [x] Première page de résumé d'actions avec couverture des données, vérification des citations par `handover verify` et interrupteur explicite `--no-llm`
+- [x] Livre d'exemple versionné dans le dépôt avec relevé de vérification (`examples/sample-report/`)
+- [x] Bout en bout depuis le paquet npm publié dans un environnement propre : installer → `gen` (Git local, `--no-llm`) → `verify` ([relevé de vérification](docs/install-verification.md))
+- [ ] Collecte avec token GitHub (`-r owner/name`) de bout en bout sur un dépôt public, et un environnement Unix dans l'exécution propre
 - [ ] Lecteur web local avec liens profonds vers les preuves (v0.2)
 - [ ] Carte des risques de compétences à l'échelle de l'organisation (v1.0)
 

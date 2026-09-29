@@ -59,7 +59,10 @@ export function searchIndex(store: HandoverStore, filter: SearchFilter = {}): { 
     if (author && who.toLowerCase() !== author) {
       return false;
     }
-    if (filter.since && when && when < filter.since) {
+    // A since-restricted query can only return provably in-window items —
+    // records without a usable date (pending reviews, unknown commit dates)
+    // must not slip through on a null comparison.
+    if (filter.since && (!when || when < filter.since)) {
       return false;
     }
     if (query && !text.toLowerCase().includes(query)) {

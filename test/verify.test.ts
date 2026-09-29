@@ -102,6 +102,23 @@ describe('verifyCitations', () => {
     }
   });
 
+  it('extracts and checks bare review citations ([review:42]) — the format the LLM prompt mandates', () => {
+    const markdown = 'Guidance from [review:42] and repo-qualified [acme/api review:42], plus a missing [review:999].';
+    const raws = extractCitations(markdown).map((token) => token.raw);
+    expect(raws).toContain('review:42');
+    expect(raws).toContain('acme/api review:42');
+
+    const store = seed();
+    try {
+      const report = verifyCitations(store, 'book.md', markdown);
+      expect(report.checked.find((ref) => ref.raw === 'review:42')?.ok).toBe(true);
+      expect(report.checked.find((ref) => ref.raw === 'acme/api review:42')?.ok).toBe(true);
+      expect(report.checked.find((ref) => ref.raw === 'review:999')?.ok).toBe(false);
+    } finally {
+      store.close();
+    }
+  });
+
   it('returns an empty report for a book without citations', () => {
     const store = seed();
     try {

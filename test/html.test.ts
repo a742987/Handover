@@ -69,4 +69,58 @@ describe('renderBookHtml', () => {
     expect(lowered).not.toContain('javascript:');
     expect(lowered).not.toContain('&#106;avascript');
   });
+
+  it('neutralizes HTML5-named-entity scheme smuggling (javascript&colon;)', () => {
+    const book = sampleBook();
+    book.chapters[0]!.content = '[c](javascript&colon;alert(1)) and <a href="javascript&colon;alert(1)">raw</a>';
+    const html = renderBookHtml(book, renderBook(book));
+    const lowered = html.toLowerCase();
+    expect(lowered).not.toContain('&colon;');
+    expect(lowered).not.toContain('javascript:');
+  });
+
+  it('strips entity-encoded whitespace hidden inside the scheme word', () => {
+    const book = sampleBook();
+    book.chapters[0]!.content = '[nl](jav&#x0A;ascript:alert(1)) [tab](jav&#x09;ascript:alert(1))';
+    const html = renderBookHtml(book, renderBook(book));
+    const lowered = html.toLowerCase();
+    expect(lowered).not.toContain('&#x0a;');
+    expect(lowered).not.toContain('&#x09;');
+    expect(lowered).not.toContain('avascript:alert');
+  });
+
+  it('clamps out-of-range numeric character references instead of crashing', () => {
+    const book = sampleBook();
+    book.chapters[0]!.content = '[big](&#x110000;next)';
+    expect(() => renderBookHtml(book, renderBook(book))).not.toThrow();
+    expect(renderBookHtml(book, renderBook(book))).toContain('big');
+  });
+
+  it('drops SVG animate elements that could animate a href into a scheme', () => {
+    const book = sampleBook();
+    book.chapters[0]!.content = '<svg><a id="x"><animate attributeName="href" values="javascript:alert(1)"/></a></svg>';
+    const html = renderBookHtml(book, renderBook(book));
+    const lowered = html.toLowerCase();
+    expect(lowered).not.toContain('<animate');
+    expect(lowered).not.toContain('javascript:');
+  });
+
+  it('keeps the rest of the book when chapter content carries a malformed script tag', () => {
+    const book = sampleBook();
+    book.chapters[0]!.content = 'evil <script >alert(1)</script > tail';
+    const html = renderBookHtml(book, renderBook(book));
+    expect(html).not.toContain('<script');
+    // the appendix after the poisoned chapter must survive the round-trip
+    expect(html).toContain('Appendix — evidence register');
+  });
+
+  it('lets safe schemes and relative links through untouched', () => {
+    const book = sampleBook();
+    book.chapters[0]!.content = '[web](https://example.com/x?a=1&b=2) [mail](mailto:ops@example.com) [rel](docs/runbook.md) [frag](#appendix)';
+    const html = renderBookHtml(book, renderBook(book));
+    expect(html).toContain('example.com/x?a=1');
+    expect(html).toContain('href="mailto:ops@example.com"');
+    expect(html).toContain('href="docs/runbook.md"');
+    expect(html).toContain('href="#appendix"');
+  });
 });

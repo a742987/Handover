@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderBook } from '../src/render/markdown.js';
 import { CHAPTER_TITLES } from '../src/distill/synthesize.js';
+import { codeSpan, escapeHeading } from '../src/render/escape.js';
 import type { BookChapter, BookCoverage, HandoverBook } from '../src/types.js';
 
 function chapter(id: BookChapter['id'], content: string): BookChapter {
@@ -148,5 +149,55 @@ describe('renderBook', () => {
     expect(markdown).toContain('[`acme/api#101`](https://github.com/acme/api/issues/101)');
     expect(markdown).toContain('`acme/api#7 review:42`');
     expect(markdown).not.toContain('`#101`'); // ambiguous bare ref must not leak into a multi-repo book
+  });
+
+  it('keeps evidence refs that share a number across repositories in the appendix', () => {
+    const colliding: HandoverBook = {
+      ...book,
+      repos: ['acme/api', 'acme/web'],
+      chapters: [
+        {
+          id: 3,
+          title: CHAPTER_TITLES[3],
+          content: 'Evidence: [acme/api#12] [acme/web#12]',
+          evidence: [
+            { kind: 'issue', ref: '#12', repo: 'acme/api' },
+            { kind: 'issue', ref: '#12', repo: 'acme/web' },
+          ],
+          generatedBy: 'deterministic',
+        },
+      ],
+    };
+    const markdown = renderBook(colliding);
+    expect(markdown).toContain('`acme/api#12`');
+    expect(markdown).toContain('`acme/web#12`');
+  });
+
+  it('keeps `&` readable in chapter headings instead of leaking an entity', () => {
+    const withSix: HandoverBook = { ...book, chapters: [...book.chapters, chapter(6, 'draft answers go here')] };
+    const markdown = renderBook(withSix);
+    expect(markdown).toContain('## 6. Questions & Draft Answers');
+    expect(markdown).not.toContain('&amp; Draft');
+  });
+});
+
+describe('codeSpan', () => {
+  it('widens the fence over backtick runs so content cannot break out', () => {
+    expect(codeSpan('ui-kit')).toBe('`ui-kit`');
+    expect(codeSpan('a`b')).toBe('``a`b``');
+    expect(codeSpan('a``b`c')).toBe('```a``b`c```');
+    // leading/trailing backticks get a space so the fence stays intact
+    expect(codeSpan('`x`')).toBe('`` `x` ``');
+  });
+
+  it('flattens line breaks and escapes pipes for table cells', () => {
+    expect(codeSpan('line1\nline2')).toBe('`line1 line2`');
+    expect(codeSpan('a|b', true)).toBe('`a\\|b`');
+    expect(codeSpan('a|b')).toBe('`a|b`');
+  });
+
+  it('escapeHeading keeps & readable and neutralizes HTML', () => {
+    expect(escapeHeading('Questions & Draft Answers')).toBe('Questions & Draft Answers');
+    expect(escapeHeading('<script>')).toBe('&lt;script>');
   });
 });

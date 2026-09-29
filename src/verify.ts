@@ -36,6 +36,9 @@ export interface VerifyReport {
 
 const COMMIT_TOKEN = /\[`?([0-9a-f]{7,40})`?\]/g;
 const NUM_TOKEN = /\[`?([A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*)?#(\d+)(?:\s+review:(\d+))?`?\]/g;
+// Bare review citations ("[review:456]") are the exact format the LLM system
+// prompt instructs the model to emit, so they must be checked, not skipped.
+const REVIEW_TOKEN = /\[`?([A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*)?\s*review:(\d+)`?\]/g;
 
 interface FoundToken {
   raw: string;
@@ -71,6 +74,14 @@ export function extractCitations(markdown: string): FoundToken[] {
         number,
         reviewId,
       });
+    }
+  }
+  for (const match of markdown.matchAll(REVIEW_TOKEN)) {
+    const repo = match[1];
+    const reviewId = Number(match[2]);
+    const raw = repo ? `${repo} review:${reviewId}` : `review:${reviewId}`;
+    if (!tokens.has(raw)) {
+      tokens.set(raw, { raw, kind: 'review', repo, reviewId });
     }
   }
   return [...tokens.values()];

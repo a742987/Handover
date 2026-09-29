@@ -438,3 +438,49 @@ describe('GitHubCollector', () => {
     store.close();
   });
 });
+
+describe('collection scope normalization', () => {
+  it('treats a mixed-case repo name as the same repo, not an orphan to wipe', async () => {
+    const { store } = await collect({
+      commits: [{ sha: 'a'.repeat(40), author: { login: USERNAME }, commit: { author: { date: '2026-09-01T00:00:00Z' }, message: 'first' } }],
+    });
+    expect(store.allCommits()).toHaveLength(1);
+
+    // A later run passes the same repo with different casing — SQLite's NOT IN
+    // is case-sensitive, so the unnormalized scope would wipe `acme/api` rows.
+    const calls = { getCommit: 0 };
+    const collector = new GitHubCollector('test-token', fakeOctokit({ commits: [] }, calls) as unknown as Octokit);
+    await collector.collectInto(store, USERNAME, ['Acme/API'], {});
+    expect(store.allCommits()).toHaveLength(1);
+    expect(store.getMeta('repos')).toBe('acme/api');
+    store.close();
+  });
+
+  it('sums PR additions/deletions from the file pages (pulls.list does not carry them)', async () => {
+    const { store } = await collect({
+      commits: [],
+      pullRequests: [
+        {
+          number: 3,
+          title: 'big change',
+          user: { login: USERNAME },
+          state: 'closed',
+          created_at: '2026-09-01T00:00:00Z',
+          updated_at: '2026-09-01T00:00:00Z',
+        },
+      ],
+      prFiles: { 3: [{ filename: 'a.ts', additions: 30, deletions: 4 }, { filename: 'b.ts', additions: 12, deletions: 2 }] },
+    });
+    const pr = store.allPullRequests()[0];
+    expect(pr?.additions).toBe(42);
+    expect(pr?.deletions).toBe(6);
+    expect(pr?.changedFiles).toBe(2);
+    store.close();
+  });
+
+  it('records the collection source for the book front page', async () => {
+    const { store } = await collect({ commits: [] });
+    expect(store.getMeta('collected_via')).toBe('github');
+    store.close();
+  });
+});
