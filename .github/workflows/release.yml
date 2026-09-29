@@ -70,7 +70,14 @@ jobs:
           node scripts/check-package.mjs "$RUNNER_TEMP"/pack/*.tgz
 
       - name: Publish with provenance
-        run: npm publish --provenance --access public --tag "$NPM_DIST_TAG"
+        # --ignore-scripts skips prepublishOnly's check-release here on purpose:
+        # that guard exists for hands typing `npm publish` on a workstation, and
+        # it cannot see the annotated tag object through actions/checkout (the
+        # first two v0.1.3 runs proved it). CI asserts the same properties
+        # explicitly above — the tag matches package.json, the tagged commit is
+        # on main, the tree is the checkout itself — and dist/ was built by the
+        # step before, so the artifact is complete without the local guardrail.
+        run: npm publish --provenance --access public --ignore-scripts --tag "$NPM_DIST_TAG"
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # new pre-release lines can be pointed at a channel without editing YAML
