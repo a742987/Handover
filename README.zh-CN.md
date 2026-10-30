@@ -5,6 +5,8 @@
 [![CI](https://github.com/a742987/Handover/actions/workflows/ci.yml/badge.svg)](https://github.com/a742987/Handover/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/handover-book)](https://www.npmjs.com/package/handover-book)
 
+> **维护状态（2026-10）：** 本项目处于低频维护模式——v0.1.x 功能已完整，暂不做主动的功能开发。issue 中的 bug 和报告质量反馈仍会被阅读并修复，但新功能的 PR 可能无人及时审阅。CI gate / bus-factor 是最有潜力的下一步方向，但尚未经真实场景验证，没有时间表。
+
 # Handover（交接手册）
 
 **开发者离开时，他们的知识不应该随之离开。**

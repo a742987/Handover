@@ -7,6 +7,8 @@
 [![CI](https://github.com/a742987/Handover/actions/workflows/ci.yml/badge.svg)](https://github.com/a742987/Handover/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/handover-book)](https://www.npmjs.com/package/handover-book)
 
+> **Maintenance status (2026-10):** this project is in slow-moving maintenance mode — feature-complete at v0.1.x, no active feature development. Bugs and report-quality feedback in issues are still read and fixed; PRs for new features may sit unreviewed. The CI gate / bus-factor direction is the most promising next step, but it is unvalidated and not on a timeline.
+
 **When a developer leaves, their knowledge shouldn't.**
 
 Turn Git history and PR discussions into an evidence-linked handover for the next maintainer. Handover finds maintenance concentrations, revisits past decisions with their original discussions, and lists the questions to confirm before the handover — every claim linked back to the commit, PR, review, or issue it came from.
