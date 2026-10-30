@@ -190,7 +190,9 @@ describe('the glob matcher is bounded *and* still means what it meant', () => {
     const segments = p.split('/').filter((segment) => segment.length > 0);
     const parts = path.split('/').filter((part) => part.length > 0);
     if (dirPrefix) {
-      return refPath([...segments, '**'], parts);
+      // mirrors the production fix: a directory rule never claims a file that
+      // merely shares the directory's name
+      return parts.length > segments.length && refPath([...segments, '**'], parts);
     }
     if (anyDepth) {
       return refPath(['**', ...segments], parts) || refPath(['**', ...segments, '**'], parts);
@@ -258,6 +260,9 @@ describe('the glob matcher is bounded *and* still means what it meant', () => {
       ['docs', 'src/docs/README.md', true],
       ['docs', 'docsx/a.ts', false],
       ['docs/', 'docs/a.ts', true],
+      // a trailing slash is a directory rule: it must not claim a file that
+      // merely shares the directory's name
+      ['docs/', 'docs', false],
       ['/docs', 'docs/a.ts', true],
       ['/docs', 'src/docs/a.ts', false],
       ['*.ts', 'a.ts', true],

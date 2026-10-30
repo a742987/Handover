@@ -7,7 +7,7 @@ This table records the check for *this* sample only — it says nothing about th
 | # | Judgment (book wording) | Type | Evidence | Support | Confirmation & result |
 |---|---|---|---|---|---|
 | 1 | `demo-shop:payments`: 85% of commits (11/13) by @dana-dev | fact | commit records, e.g. `3c994a1`, `320d6cd`, `ee9b679` | fully supported | ground truth: 11 dana + 2 sam of 13 payments commits. kept |
-| 2 | @dana-dev was the sole reviewer on all 2 reviews of payments PRs | fact | `#17 review:105` (reviews 101, 105 both by dana) | fully supported | review fixtures match. kept |
+| 2 | @dana-dev was the sole reviewer on all 2 reviewed PRs touching payments | fact | `#12 review:101` (reviews 101, 105 both by dana) | fully supported | review fixtures match. kept |
 | 3 | 2 payments commits reference bug-labelled issue #9 | fact | `#9`; commits `fix: charge double-fire on retry (#9)`, `fix: idempotency key collision … (#9)` | fully supported | issue #9 has the `bug` label. kept |
 | 4 | `demo-shop:infra`: 4/4 commits (100%) by @dana-dev | fact | `82bc28f`, `559cef2`, `84a5fe3` | fully supported | ground truth: all 4 infra commits are dana's. kept |
 | 5 | payments risk score 1.464, rank 1 | inference | formula + factors 0.85 × 1.00 × 1.15 × 1.50 | supported | arithmetic verified (0.8462 × 1.1538 × 1.5 = 1.4646). kept |

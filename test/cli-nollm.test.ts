@@ -202,6 +202,30 @@ describe('handover gate must not fail open', () => {
   }, 120_000);
 });
 
+describe('handover render tolerates a valueless -r', () => {
+  // `-r` is an optional-variadic flag on render. When it arrives with no value,
+  // commander's parser never runs and the option value becomes the boolean
+  // `true`, which used to explode in the pipeline ("true is not iterable") —
+  // the same commander/pipeline seam class as the --no-llm defect above.
+  it('treats a bare -r as "use the repositories recorded in the index"', async () => {
+    const repo = await makeRepo();
+    const dataDir = await mkdtemp(path.join(tmpdir(), 'handover-cli-render-'));
+    tempDirs.push(dataDir);
+    const collected = await runCli(
+      ['collect', 'alice', '--git-dir', repo, '--author', 'alice@example.com', '--data-dir', dataDir],
+      {},
+      tmpdir(),
+    );
+    expect(collected.code).toBe(0);
+
+    const bare = await runCli(['render', 'alice', '-r', '--no-llm', '--data-dir', dataDir], {}, tmpdir());
+    expect(bare.code, bare.stderr).toBe(0);
+    expect(bare.stderr).not.toContain('not iterable');
+    expect(bare.stdout).toContain('Using repositories from the index');
+    expect(bare.stdout).toContain('Book:');
+  }, 120_000);
+});
+
 /**
  * Round seventeen found that a repository key reaches the terminal without
  * passing any writer that sanitises it, and that on Linux/macOS a directory name

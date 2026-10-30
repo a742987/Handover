@@ -670,6 +670,7 @@ export class GitHubCollector {
         repo: name,
         number,
         title: pr.title ?? '',
+        body: record.body,
         authorLogin: pr.user?.login ?? 'unknown',
         state: pr.state ?? 'unknown',
         createdAt,
@@ -712,6 +713,7 @@ export class GitHubCollector {
     for await (const issue of this.paginate<{
       number?: number;
       title?: string;
+      body?: string | null;
       user?: { login?: string } | null;
       state?: string;
       created_at?: string;
@@ -765,6 +767,7 @@ export class GitHubCollector {
         repo: name,
         number,
         title: issue.title ?? '',
+        body: issue.body ?? '',
         authorLogin: issue.user?.login ?? 'unknown',
         state: issue.state ?? 'unknown',
         createdAt,

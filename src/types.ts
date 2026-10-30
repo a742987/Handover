@@ -53,6 +53,8 @@ export interface IssueRecord {
   repo: string;
   number: number;
   title: string;
+  /** the issue author's own description; '' when GitHub reports none */
+  body: string;
   authorLogin: string;
   state: string;
   createdAt: string;

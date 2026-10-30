@@ -175,6 +175,7 @@ export class HandoverStore {
         repo TEXT NOT NULL,
         number INTEGER NOT NULL,
         title TEXT NOT NULL,
+        body TEXT NOT NULL DEFAULT '',
         author_login TEXT NOT NULL,
         state TEXT NOT NULL,
         created_at TEXT NOT NULL,
@@ -220,6 +221,7 @@ export class HandoverStore {
       'ALTER TABLE pull_requests ADD COLUMN updated_at TEXT',
       'ALTER TABLE issues ADD COLUMN updated_at TEXT',
       'ALTER TABLE pull_requests ADD COLUMN head_sha TEXT',
+      "ALTER TABLE issues ADD COLUMN body TEXT NOT NULL DEFAULT ''",
     ]) {
       try {
         this.db.exec(statement);
@@ -234,7 +236,7 @@ export class HandoverStore {
     // schema_version tracks backward-incompatible migrations; a database
     // with a newer version than this code knows must be refused rather than
     // silently corrupted.
-    const VERSION = 3;
+    const VERSION = 4;
     this.run('INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)', 'schema_version', String(VERSION));
     const row = this.get('SELECT value FROM meta WHERE key = ?', 'schema_version');
     const current = row ? Number(str(row['value'])) : 0;
@@ -552,10 +554,11 @@ export class HandoverStore {
 
   private upsertIssueInner(issue: IssueRecord): void {
     this.run(
-        `INSERT INTO issues (repo, number, title, author_login, state, created_at, updated_at, closed_at, is_pull_request)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO issues (repo, number, title, body, author_login, state, created_at, updated_at, closed_at, is_pull_request)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (repo, number) DO UPDATE SET
            title = excluded.title,
+           body = excluded.body,
            author_login = excluded.author_login,
            state = excluded.state,
            created_at = excluded.created_at,
@@ -565,6 +568,7 @@ export class HandoverStore {
         sanitizeToken(issue.repo),
         issue.number,
         sanitizeProse(issue.title),
+        sanitizeProse(issue.body ?? ''),
         sanitizeToken(issue.authorLogin),
         sanitizeToken(issue.state),
         sanitizeToken(issue.createdAt),
@@ -981,6 +985,7 @@ export class HandoverStore {
         repo,
         number,
         title: str(row['title']),
+        body: str(row['body']),
         authorLogin: str(row['author_login']),
         state: str(row['state']),
         createdAt: str(row['created_at']),

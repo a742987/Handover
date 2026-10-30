@@ -36,6 +36,7 @@ function seed(): HandoverStore {
     repo: 'acme/api',
     number: 9,
     title: 'payments crash',
+    body: 'the settlement worker crashes on retries',
     authorLogin: 'bob',
     state: 'closed',
     createdAt: '2026-07-01T00:00:00Z',

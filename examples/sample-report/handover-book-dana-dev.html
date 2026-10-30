@@ -27,7 +27,7 @@
 <p><em>When a developer leaves, their knowledge shouldn&#39;t.</em></p>
 <ul>
 <li><strong>Repositories:</strong> demo-shop</li>
-<li><strong>Generated:</strong> 2026-09-29T11:01:37.155Z</li>
+<li><strong>Generated:</strong> 2026-09-30T23:36:46.242Z</li>
 <li><strong>Chapters:</strong> 6</li>
 <li><strong>Synthesis:</strong> deterministic (no LLM key configured)</li>
 <li><strong>Redaction:</strong> known secret formats were scrubbed from this rendering (best effort, not a guarantee).</li>
@@ -49,9 +49,9 @@
 <h3>Confirm before the handover (top 3)</h3>
 <p><strong>1. <code>demo-shop:payments</code></strong></p>
 <ul>
-<li><strong>Finding:</strong> @dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviews of its PRs; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).</li>
+<li><strong>Finding:</strong> @dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviewed PRs touching this module; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).</li>
 <li><strong>Confirm with @dana-dev (the departing engineer):</strong> Who can review changes to <code>demo-shop:payments</code> after @dana-dev leaves, and is that person confident doing it today?</li>
-<li><strong>Evidence:</strong> <code>3c994a1</code> <code>320d6cd</code> <code>ee9b679</code> <code>#17 review:105</code> <code>#9</code></li>
+<li><strong>Evidence:</strong> <code>3c994a1</code> <code>320d6cd</code> <code>ee9b679</code> <code>#12 review:101</code> <code>#9</code></li>
 <li><strong>Next step:</strong> Have the successor read and run <code>demo-shop:payments</code>, then walk this item with @dana-dev and record the answer with <code>handover capture</code>.</li>
 <li><strong>Limitation:</strong> Commit and review counts show authorship, not knowledge: pair programming, verbal decisions and off-repo work are invisible to Git. Treat this as a signal to verify, not a verdict.</li>
 </ul>
@@ -140,7 +140,7 @@
 </ul>
 <h3>Sole reviewer</h3>
 <ul>
-<li><code>demo-shop:payments</code> — every review on this module&#39;s PRs was by @dana-dev [#17 review:105]</li>
+<li><code>demo-shop:payments</code> — every review on this module&#39;s PRs was by @dana-dev [#12 review:101]</li>
 </ul>
 <h2>3. Risk Top 5</h2>
 <p>Scored as <code>sole_contribution_ratio × change_frequency × incident_weight × irreplaceability</code>. Every item lists its evidence chain.</p>
@@ -151,8 +151,8 @@
 <li>incident weight: 1.15</li>
 <li>irreplaceability: ×1.50</li>
 </ul>
-<p>@dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviews of its PRs; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).</p>
-<p>Evidence: [3c994a1] [320d6cd] [ee9b679] [#17 review:105] [#9]</p>
+<p>@dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviewed PRs touching this module; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).</p>
+<p>Evidence: [3c994a1] [320d6cd] [ee9b679] [#12 review:101] [#9]</p>
 <h3>2. <code>demo-shop:infra</code> — score 0.521</h3>
 <ul>
 <li>sole contribution: 100%</li>
@@ -190,7 +190,7 @@
 <h2>5. The 30-Day Path</h2>
 <p>A starting plan built from the risk ranking (LLM synthesis was unavailable).</p>
 <ul>
-<li><p>Week 1: read and run <code>demo-shop:payments</code>; reconcile the evidence in [3c994a1] [320d6cd] [ee9b679] [#17 review:105] [#9].</p>
+<li><p>Week 1: read and run <code>demo-shop:payments</code>; reconcile the evidence in [3c994a1] [320d6cd] [ee9b679] [#12 review:101] [#9].</p>
 </li>
 <li><p>Week 2: read and run <code>demo-shop:infra</code>; reconcile the evidence in [82bc28f] [559cef2] [84a5fe3] [#31].</p>
 </li>
@@ -233,17 +233,17 @@
 <blockquote>
 <p>payments/webhooks.ts. The replay guard works but the capture window is keyed off an in-memory map — one pod restart and we re-process webhooks. I would make it durable before touching anything else.</p>
 </blockquote>
-<p>   — captured 2026-09-29
+<p>   — captured 2026-09-30
 2. <strong>Which piece of the system looks wrong but must not be &quot;fixed&quot; — and what broke the last time someone tried?</strong></p>
 <blockquote>
 <p>The double-submit in checkout looks like a bug; it is how we dedupe against the provider. Removing it caused issue #9 (double charges on retry). The idempotency keys in PR #17 are the fix — do not remove them.</p>
 </blockquote>
-<p>   — captured 2026-09-29
+<p>   — captured 2026-09-30
 3. <strong>Which deploy/migration quirk is load-bearing?</strong></p>
 <blockquote>
 <p>The canary health-check timeout in infra/deploy.sh must stay at 30s to match the load balancer; anything shorter flaps the EU region (issue #31). And always run the migration dry-run first — the users table has a hand-patched index from the 2024 incident.</p>
 </blockquote>
-<p>   — captured 2026-09-29</p>
+<p>   — captured 2026-09-30</p>
 <h2>Appendix — evidence register</h2>
 <table>
 <thead>
@@ -295,8 +295,8 @@
 </tr>
 <tr>
 <td>review</td>
-<td><code>#17 review:105</code></td>
-<td>all 2 reviews on this module&#39;s PRs were by @dana-dev</td>
+<td><code>#12 review:101</code></td>
+<td>the only reviewer on all 2 reviewed PRs touching this module was @dana-dev</td>
 </tr>
 <tr>
 <td>issue</td>

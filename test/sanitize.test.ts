@@ -140,6 +140,7 @@ describe('the index strips controls on write, whichever collector supplied them'
       repo: 'acme/api',
       number: 9,
       title: `outage${FORGED}`,
+      body: `root cause: the retry queue${FORGED}`,
       authorLogin: 'erin',
       state: 'closed',
       createdAt: '2026-09-01T00:00:00Z',
@@ -164,6 +165,8 @@ describe('the index strips controls on write, whichever collector supplied them'
     const storedIssue = store.allIssues().find((entry) => entry.number === 9);
     expect(storedIssue!.labels).toEqual(['bug[1;31mGATE-APPROVED[0m']);
     expect(storedIssue!.labels.join('')).not.toMatch(NO_CONTROLS);
+    expect(storedIssue!.body).toContain('root cause: the retry queue');
+    expect(storedIssue!.body).not.toMatch(NO_CONTROLS);
     expect(storedIssue!.comments[0]?.body).toContain('hit twice');
     const paths = store.allPrFiles().get('acme/api#12') ?? [];
     expect(paths.join('')).not.toMatch(NO_CONTROLS);

@@ -74,6 +74,7 @@ describe('searchIndex', () => {
       repo: 'acme/api',
       number: 12,
       title: 'Queue backlog after deploys',
+      body: 'The queue drains slowly after every deploy window.',
       authorLogin: 'bob',
       state: 'open',
       createdAt: '2026-09-07T00:00:00Z',
@@ -87,6 +88,7 @@ describe('searchIndex', () => {
       repo: 'acme/api',
       number: 9,
       title: 'Queue redesign',
+      body: 'We batch by size, not by timeout.',
       authorLogin: 'alice',
       state: 'closed',
       createdAt: '2026-09-06T00:00:00Z',
@@ -146,6 +148,15 @@ describe('searchIndex', () => {
     expect(results[0]?.ref).toContain('review:900');
     expect(results[0]?.ref).toContain('comment:901');
     expect(results[0]?.author).toBe('carol');
+  });
+
+  it('searches issue bodies, not just titles and comments', () => {
+    // "drains slowly" appears only in issue #12's body — a phrase that used to
+    // be invisible because issue bodies were never collected
+    const { results } = searchIndex(store, { query: 'drains slowly', kind: 'issue' });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.ref).toBe('#12');
+    expect(results[0]?.excerpt).toBe('Queue backlog after deploys');
   });
 
   it('matches a repo basename but never across owners', () => {

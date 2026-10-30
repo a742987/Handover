@@ -5,7 +5,7 @@ import type { HandoverStore } from '../store/sqlite.js';
 import { escapeHtmlText, escapeMarkdown, codeSpan, neutralizeGeneratedMarkup } from '../render/escape.js';
 import { evidenceToken } from '../render/refs.js';
 import { redact } from '../render/redact.js';
-import { computeRisk, moduleOf } from '../risk/engine.js';
+import { computeRisk, moduleOf, isBotLogin } from '../risk/engine.js';
 import type { LlmProvider } from './llm.js';
 
 export const CHAPTER_TITLES: Record<ChapterId, string> = {
@@ -48,6 +48,14 @@ interface ModuleStat {
 function computeModuleStats(store: HandoverStore, username: string): ModuleStat[] {
   const stats = new Map<string, ModuleStat>();
   for (const commit of store.iterCommits()) {
+    // Same author universe as the risk engine: unattributed ('unknown') commits
+    // and CI bots must not dilute the share here, or chapter 1 and the digest
+    // would disagree with chapter 3's sole-contribution ratios.
+    const isUser = commit.authorLogin !== 'unknown' && sameLogin(commit.authorLogin, username);
+    const isKnownAuthor = commit.authorLogin !== 'unknown' && !isBotLogin(commit.authorLogin);
+    if (!isUser && !isKnownAuthor) {
+      continue;
+    }
     // Per-commit dedup: each file counts once per module, matching risk engine semantics
     const modulesInCommit = new Set<string>();
     for (const file of commit.files) {
@@ -64,7 +72,7 @@ function computeModuleStats(store: HandoverStore, username: string): ModuleStat[
       if (commit.authoredAt > stat.lastTouchedAt) {
         stat.lastTouchedAt = commit.authoredAt;
       }
-      if (sameLogin(commit.authorLogin, username)) {
+      if (isUser) {
         stat.byUser += 1;
       }
     }
@@ -151,6 +159,7 @@ const SYSTEM_PROMPT = `You are the ghostwriter of a "Handover Book": a bound, ev
 
 Hard rules:
 - Every factual claim must cite evidence in square brackets using the refs present in the material: a commit like [a1b2c3d], a PR or issue like [#123], or a review like [review:456].
+- The material backslash-escapes square brackets and exclamation marks, so those refs appear there as \\[#123\\] and \\[a1b2c3d\\]. When you cite a ref, emit it WITHOUT the backslashes.
 - When the material spans more than one repository, qualify PR, issue and review citations with the repo prefix, like [owner/name#123], because bare numbers are ambiguous.
 - If you state something the material does not support, you MUST prefix that claim with "(inference)".
 - Never impersonate the departing engineer. Do not write in their voice or invent their opinions. Where their view is needed, write what the evidence suggests and mark it as a draft for them to confirm.
@@ -299,7 +308,7 @@ function decisionFallback(input: SynthesisInput): BookChapter {
     lines.push('No PRs authored by the departing engineer were found in the index.');
   }
   for (const pr of prs) {
-    lines.push(`- [#${pr.number}] **${escapeMarkdown(pr.title)}** (${pr.repo})${pr.body ? ` — ${escapeMarkdown(excerpt(pr.body, 400))}` : ''}`);
+    lines.push(`- [#${pr.number}] **${escapeMarkdown(pr.title)}** (${escapeHtmlText(pr.repo)})${pr.body ? ` — ${escapeMarkdown(excerpt(pr.body, 400))}` : ''}`);
   }
   return { id: 4, title: CHAPTER_TITLES[4], content: lines.join('\n'), evidence: [], generatedBy: 'deterministic' };
 }

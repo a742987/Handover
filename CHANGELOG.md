@@ -2,6 +2,26 @@
 
 Notable changes to the `handover-book` npm package and the CLI. Dates are UTC.
 
+## Unreleased
+
+**Security**
+
+- Windows git resolution is now actually closed against a planted `git.exe`: `where.exe` itself searches the current directory *before* `PATH` (documented), so the 0.1.3 fix could still return a binary planted in the MCP server's model-writable cwd. Candidates inside the working directory are now skipped, and git subprocesses run with `NoDefaultCurrentDirectoryInExePath` set so the bare-`git` fallback cannot resolve from the cwd either.
+
+**Fixed**
+
+- `handover render <user> -r` (flag without a value) no longer crashes with "true is not iterable": commander sets an optional-variadic flag to `true` when no value follows, and that value is now treated as "not given" — the repositories recorded in the index are used, exactly as when the flag is omitted. A CLI regression test pins it.
+- Issue bodies are now collected into the index (schema v4) and searched by `handover search` / `handover_search`, like PR bodies always were; previously only issue titles and comments were stored, so issue discussions were invisible to the evidence search.
+- Chapter 1 (Code Panorama) and the LLM digest now exclude unattributed (`unknown`) and `*[bot]` commits from module shares, matching the risk engine's ratios instead of diluting them with CI bot activity.
+- The chapter-4 deterministic fallback escapes the repository key it prints — the last unescaped interpolation of index-derived text in the renderer.
+- A `docs/`-style CODEOWNERS directory rule no longer claims a *file* that merely shares the directory's name; trailing-slash rules own only what is inside the directory.
+
+**Docs**
+
+- The LLM system prompt now tells the model that evidence refs arrive backslash-escaped in the digest (`\[#123\]`, `\[a1b2c3d\]`) and must be cited without the backslashes — the digest's escaping is load-bearing (it keeps `![x](…)` image syntax from being echoed into the book), so it stays.
+- CONTRIBUTING now states `check-release.mjs`'s actual branch rule: non-`main` branches are refused only when they do not sit on the tagged commit.
+- The committed sample report was regenerated so it matches the current renderer's wording (the sole-reviewer sentence changed in 0.1.3 after the sample was refreshed).
+
 ## 0.1.3 — 2026-09-29
 
 Review rounds five and four first (a full read of every shipped source file, then a full audit of the working tree), then the third and second rounds' entries beneath them.

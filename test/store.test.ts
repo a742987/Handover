@@ -44,6 +44,7 @@ function mirroredIssue(number: number): IssueRecord {
     repo: REPO,
     number,
     title: `PR ${number}`,
+    body: `PR ${number} body`,
     authorLogin: 'alice',
     state: 'closed',
     createdAt: '2026-09-01T00:00:00Z',
@@ -135,6 +136,7 @@ describe('HandoverStore', () => {
       repo: REPO,
       number: 101,
       title: 'Settlement job crashes on leap days',
+      body: 'The date math drops the 29th.',
       authorLogin: 'bob',
       state: 'closed',
       createdAt: '2026-02-28T00:00:00Z',
@@ -148,6 +150,7 @@ describe('HandoverStore', () => {
     const issues = store.allIssues();
     expect(issues).toHaveLength(1);
     expect(issues[0]?.labels).toEqual(['bug', 'incident']);
+    expect(issues[0]?.body).toContain('drops the 29th');
     expect(issues[0]?.comments[0]?.body).toContain('timezone');
   });
 
@@ -166,7 +169,7 @@ describe('HandoverStore', () => {
       createdAt: '2026-09-01T00:00:00Z', mergedAt: null, body: '', additions: 0, deletions: 0, changedFiles: 0,
     });
     store.upsertIssue({
-      repo: REPO, number: 10, title: 't', authorLogin: 'bob', state: 'open',
+      repo: REPO, number: 10, title: 't', body: '', authorLogin: 'bob', state: 'open',
       createdAt: '2026-09-01T00:00:00Z', closedAt: null, labels: [], comments: [],
     });
     expect(store.hasPullRequest(REPO, 1)).toBe(true);
@@ -215,7 +218,7 @@ describe('HandoverStore', () => {
     store.upsertCommit(commit('a'.repeat(40), 'alice', '2026-09-01T00:00:00Z', ['payments/a.ts']));
     store.upsertCommit({ ...commit('b'.repeat(40), 'bob', '2026-09-01T00:00:00Z', ['src/b.ts']), repo: other });
     store.upsertIssue({
-      repo: other, number: 1, title: 't', authorLogin: 'bob', state: 'open',
+      repo: other, number: 1, title: 't', body: '', authorLogin: 'bob', state: 'open',
       createdAt: '2026-09-01T00:00:00Z', closedAt: null, labels: ['bug'],
       comments: [{ id: 5, number: 1, authorLogin: 'alice', createdAt: '2026-09-01T00:00:00Z', body: 'x' }],
     });
@@ -367,7 +370,7 @@ describe('ghost-data pruning', () => {
   it('removes deleted issues and keeps mirrored PR rows', () => {
     const store = HandoverStore.inMemory();
     const issue = (number: number): IssueRecord => ({
-      repo: REPO, number, title: `issue ${number}`, authorLogin: 'bob', state: 'open',
+      repo: REPO, number, title: `issue ${number}`, body: `issue ${number} body`, authorLogin: 'bob', state: 'open',
       createdAt: '2026-09-01T00:00:00Z', closedAt: null,
       labels: ['bug'], comments: [{ id: number, number, authorLogin: 'bob', createdAt: '2026-09-01T00:00:00Z', body: 'text' }],
       isPullRequest: false,
@@ -467,7 +470,7 @@ describe('streaming and aggregate readers', () => {
       comments: [{ id: 5, reviewId: 101, path: 'payments/x.ts', body: 'a very long comment body', authorLogin: 'bob' }],
     });
     store.upsertIssue({
-      repo: REPO, number: 9, title: 'double charge', authorLogin: 'carol', state: 'closed',
+      repo: REPO, number: 9, title: 'double charge', body: 'one retry, two charges', authorLogin: 'carol', state: 'closed',
       createdAt: '2026-09-01T00:00:00Z', closedAt: null, labels: ['bug', 'regression'],
       comments: [{ id: 7, number: 9, authorLogin: 'carol', createdAt: '2026-09-01T00:00:00Z', body: 'saw it twice' }],
       isPullRequest: false,

@@ -450,9 +450,14 @@ program
     try {
       const config = loadConfig({ dataDir: options.dataDir });
       await requireIndex(config.dataDir, username, `run "handover collect ${username} -r owner/name" first.`);
+      // A valueless `-r` makes commander set this optional-variadic flag to
+      // `true` (its parser never runs), and `true` would explode downstream
+      // ("true is not iterable"). Treat it as "not given" so the index's
+      // recorded repositories are used, exactly like omitting the flag.
+      const repos = Array.isArray(options.repo) ? options.repo : [];
       const result = await renderHandoverBook({
         username,
-        repos: options.repo,
+        repos,
         dataDir: options.dataDir,
         provider: options.provider as LlmProviderName | undefined,
         model: options.model,

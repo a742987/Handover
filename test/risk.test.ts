@@ -65,6 +65,7 @@ describe('computeRisk', () => {
       repo: REPO,
       number: 101,
       title: 'Settlement crashes',
+      body: 'The settlement worker crashes on the last day of a month.',
       authorLogin: 'bob',
       state: 'closed',
       createdAt: isoDaysAgo(30),

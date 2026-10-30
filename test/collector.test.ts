@@ -44,6 +44,7 @@ interface PullRequestListItem {
 interface IssueListItem {
   number: number;
   title?: string;
+  body?: string | null;
   user?: { login?: string } | null;
   state?: string;
   created_at?: string;
@@ -316,6 +317,7 @@ describe('GitHubCollector', () => {
     const issue: IssueListItem = {
       number: 101,
       title: 'Settlement crashes',
+      body: 'The settlement worker crashes on the last day of a month.',
       user: { login: 'bob' },
       state: 'closed',
       created_at: '2026-02-28T00:00:00Z',
@@ -331,6 +333,8 @@ describe('GitHubCollector', () => {
     const { store, result } = await collect(data);
     expect(result.issues).toBe(1);
     expect(store.allIssues()[0]?.labels).toEqual(['bug']);
+    // the body maps through collection into the index (schema v4)
+    expect(store.allIssues()[0]?.body).toBe('The settlement worker crashes on the last day of a month.');
 
     const second = await collectInto(store, data);
     expect(second.result.issues).toBe(0);

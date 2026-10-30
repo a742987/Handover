@@ -159,16 +159,19 @@ async function main() {
       });
       store.upsertIssue({
         repo, number: 9, title: 'Charge double-fires when the provider times out mid-retry',
+        body: 'The client retries without an idempotency key, so the second POST lands as a new charge. Seen twice in the sandbox; fixed by the keys in PR #17.',
         authorLogin: 'sam-dev', state: 'closed', createdAt: '2026-03-20T09:00:00Z', closedAt: '2026-04-21T10:00:00Z',
         labels: ['bug'], comments: [],
       });
       store.upsertIssue({
         repo, number: 14, title: 'Quarterly signing key rotation',
+        body: 'Rotate on schedule, not on incident; the current key expires next quarter and the rotation steps live in the deploy runbook.',
         authorLogin: 'chris-lee', state: 'open', createdAt: '2026-05-01T09:00:00Z', closedAt: null,
         labels: ['ops'], comments: [],
       });
       store.upsertIssue({
         repo, number: 31, title: 'Canary check flaps in EU region',
+        body: 'Health-check timeouts shorter than the load balancer\'s 30s window mark healthy canaries as failed and roll them back.',
         authorLogin: 'sam-dev', state: 'closed', createdAt: '2026-08-20T09:00:00Z', closedAt: '2026-08-25T10:00:00Z',
         labels: ['bug'], comments: [],
       });

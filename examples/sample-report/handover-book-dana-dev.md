@@ -3,7 +3,7 @@
 *When a developer leaves, their knowledge shouldn't.*
 
 - **Repositories:** demo\-shop
-- **Generated:** 2026-09-29T11:01:37.155Z
+- **Generated:** 2026-09-30T23:36:46.242Z
 - **Chapters:** 6
 - **Synthesis:** deterministic (no LLM key configured)
 - **Redaction:** known secret formats were scrubbed from this rendering (best effort, not a guarantee).
@@ -27,9 +27,9 @@ Where the data comes from, what it misses, and the few things worth confirming b
 
 **1. `demo-shop:payments`**
 
-- **Finding:** @dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviews of its PRs; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).
+- **Finding:** @dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviewed PRs touching this module; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).
 - **Confirm with @dana-dev (the departing engineer):** Who can review changes to `demo-shop:payments` after @dana-dev leaves, and is that person confident doing it today?
-- **Evidence:** `3c994a1` `320d6cd` `ee9b679` `#17 review:105` `#9`
+- **Evidence:** `3c994a1` `320d6cd` `ee9b679` `#12 review:101` `#9`
 - **Next step:** Have the successor read and run `demo-shop:payments`, then walk this item with @dana-dev and record the answer with `handover capture`.
 - **Limitation:** Commit and review counts show authorship, not knowledge: pair programming, verbal decisions and off-repo work are invisible to Git. Treat this as a signal to verify, not a verdict.
 
@@ -92,7 +92,7 @@ Modules where the knowledge is concentrated in one person — the successor has 
 
 ### Sole reviewer
 
-- `demo-shop:payments` — every review on this module's PRs was by @dana-dev [#17 review:105]
+- `demo-shop:payments` — every review on this module's PRs was by @dana-dev [#12 review:101]
 
 ## 3. Risk Top 5
 
@@ -105,9 +105,9 @@ Scored as `sole_contribution_ratio × change_frequency × incident_weight × irr
 - incident weight: 1.15
 - irreplaceability: ×1.50
 
-@dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviews of its PRs; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).
+@dana-dev authored 11/13 commits (85%) touching demo-shop:payments; and was the sole reviewer on all 2 reviewed PRs touching this module; 2 of those commits reference bug-labelled issues (#9); recent activity score 1.00 (last 90 days).
 
-Evidence: [3c994a1] [320d6cd] [ee9b679] [#17 review:105] [#9]
+Evidence: [3c994a1] [320d6cd] [ee9b679] [#12 review:101] [#9]
 
 ### 2. `demo-shop:infra` — score 0.521
 
@@ -154,7 +154,7 @@ LLM synthesis was not available for this run, so this chapter lists the PRs with
 
 A starting plan built from the risk ranking (LLM synthesis was unavailable).
 
-- Week 1: read and run `demo-shop:payments`; reconcile the evidence in [3c994a1] [320d6cd] [ee9b679] [#17 review:105] [#9].
+- Week 1: read and run `demo-shop:payments`; reconcile the evidence in [3c994a1] [320d6cd] [ee9b679] [#12 review:101] [#9].
 - Week 2: read and run `demo-shop:infra`; reconcile the evidence in [82bc28f] [559cef2] [84a5fe3] [#31].
 - Week 3: read and run `demo-shop:auth`; reconcile the evidence in [0c62dbb] [baf88e0].
 - Week 4: read and run `demo-shop:(root)`; reconcile the evidence in [5cac95e].
@@ -184,17 +184,17 @@ Captured in the departing engineer’s own words with `handover capture` — the
 
 > payments/webhooks.ts. The replay guard works but the capture window is keyed off an in-memory map — one pod restart and we re-process webhooks. I would make it durable before touching anything else.
 
-   — captured 2026-09-29
+   — captured 2026-09-30
 2. **Which piece of the system looks wrong but must not be "fixed" — and what broke the last time someone tried?**
 
 > The double-submit in checkout looks like a bug; it is how we dedupe against the provider. Removing it caused issue #9 (double charges on retry). The idempotency keys in PR #17 are the fix — do not remove them.
 
-   — captured 2026-09-29
+   — captured 2026-09-30
 3. **Which deploy/migration quirk is load\-bearing?**
 
 > The canary health-check timeout in infra/deploy.sh must stay at 30s to match the load balancer; anything shorter flaps the EU region (issue #31). And always run the migration dry-run first — the users table has a hand-patched index from the 2024 incident.
 
-   — captured 2026-09-29
+   — captured 2026-09-30
 
 ## Appendix — evidence register
 
@@ -208,7 +208,7 @@ Captured in the departing engineer’s own words with `handover capture` — the
 | commit | `3c994a1` | fix: replay guard for captured webhooks |
 | commit | `320d6cd` | chore: bump provider sdk |
 | commit | `ee9b679` | perf: batch charge inserts |
-| review | `#17 review:105` | all 2 reviews on this module's PRs were by @dana-dev |
+| review | `#12 review:101` | the only reviewer on all 2 reviewed PRs touching this module was @dana-dev |
 | issue | `#9` | bug-labelled issue referenced from this module |
 | commit | `0c62dbb` | fix: clock skew on token validation |
 | commit | `baf88e0` | feat: refresh token rotation |

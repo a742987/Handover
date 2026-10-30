@@ -166,7 +166,9 @@ export function searchIndex(store: HandoverStore, filter: SearchFilter = {}): { 
       if (kind === 'issue' && isPr) {
         continue;
       }
-      if ((kind === 'all' || kind === 'issue') && repoAllowed(issue.repo) && matches(issue.title, issue.createdAt, issue.authorLogin)) {
+      // the body is searchable like a PR body is; the excerpt stays the title
+      const issueText = `${issue.title}\n${issue.body}`;
+      if ((kind === 'all' || kind === 'issue') && repoAllowed(issue.repo) && matches(issueText, issue.createdAt, issue.authorLogin)) {
         items.push({
           kind: isPr ? 'pr' : 'issue',
           repo: issue.repo,

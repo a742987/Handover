@@ -126,8 +126,11 @@ function ruleMatches(pattern: string, path: string): boolean {
   const segments = p.split('/').filter((segment) => segment.length > 0);
   const parts = path.split('/').filter((part) => part.length > 0);
   if (dirPrefix) {
-    // a directory rule owns everything below it; `**/` matches zero segments too
-    return pathMatches([...segments, '**'], parts);
+    // a directory rule owns everything below it — and nothing at its own depth,
+    // so a file that merely shares the directory's name (`docs`) is not owned
+    // by a `docs/` rule. The `**` tail alone would match zero extra segments
+    // and claim the file too.
+    return parts.length > segments.length && pathMatches([...segments, '**'], parts);
   }
   if (anyDepth) {
     // `docs` is a basename rule: it matches a file called docs anywhere, and

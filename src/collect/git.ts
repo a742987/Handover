@@ -102,6 +102,11 @@ function gitBinary(): string {
   if (cachedGitBinary === undefined) {
     cachedGitBinary = 'git';
     if (process.platform === 'win32') {
+      // The bare-'git' fallback resolves through CreateProcess, whose search
+      // order puts the current directory second — the exact directory a
+      // prompt-injected model can write to. This OS switch removes it from
+      // every later CreateProcess search this process performs.
+      process.env.NoDefaultCurrentDirectoryInExePath = '1';
       try {
         const where = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'where.exe');
         const out = execFileSync(where, ['git'], {
@@ -110,7 +115,27 @@ function gitBinary(): string {
           timeout: 10_000,
           stdio: ['ignore', 'pipe', 'ignore'],
         });
-        const first = out.split(/\r?\n/).map((line) => line.trim()).find((line) => line.toLowerCase().endsWith('.exe'));
+        // `where` searches the current directory *before* PATH (documented), so
+        // the first hit could be a git.exe planted in the model-writable cwd —
+        // the very thing this resolution exists to prevent. Skip any candidate
+        // inside the working directory and let a PATH hit win; short-path (8.3)
+        // spellings must not sneak a cwd match past the filter.
+        const fold = (value: string): string => {
+          try {
+            return nativeRealpath(value).toLowerCase();
+          } catch {
+            return value.toLowerCase();
+          }
+        };
+        const cwd = fold(process.cwd());
+        const first = out
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .find(
+            (line) =>
+              line.toLowerCase().endsWith('.exe') &&
+              !sameOrBelow(fold(path.dirname(line)), cwd),
+          );
         if (first) {
           cachedGitBinary = first;
         }

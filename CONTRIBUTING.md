@@ -67,8 +67,9 @@ entry and none of `src/`, `test/`, `.env`, `*.db`, and publishes with **provenan
 `npm-publish` environment approval.
 
 `npm publish` from a workstation still works but is guarded: `scripts/check-release.mjs`
-(`prepublishOnly`) refuses a dirty tree, a branch other than `main`, and any version whose
-annotated tag does not resolve to `HEAD`.
+(`prepublishOnly`) refuses a dirty tree and any version whose annotated tag does not
+resolve to `HEAD`; a non-`main` branch is allowed only when it sits exactly on the
+tagged commit ("cut releases from main or from the tagged commit").
 
 One-time repository setup for this to work — all of it is in GitHub settings, not in git:
 
